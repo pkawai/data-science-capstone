@@ -1,0 +1,12 @@
+# Jupyter
+.ipynb_checkpoints/
+.virtual_documents/
+.jupyter/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+venv/
