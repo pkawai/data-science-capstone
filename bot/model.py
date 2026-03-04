@@ -96,7 +96,7 @@ def feature_importance_plot(model: XGBClassifier,
                              ) -> None:
     """Bar chart of the top-N features by gain importance."""
     scores = pd.Series(
-        model.get_booster().get_fscore(importance_type="gain"),
+        model.get_booster().get_score(importance_type="gain"),
         name="Importance",
     ).sort_values(ascending=False).head(top_n)
 
