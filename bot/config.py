@@ -57,7 +57,7 @@ XGBOOST_PARAMS = {
     "random_state":    42,
     "n_jobs":          -1,
 }
-CONFIDENCE_THRESHOLD = 0.70          # minimum class probability to act
+CONFIDENCE_THRESHOLD = 0.65          # minimum class probability to act
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
 TRAIN_MONTHS  = 15                   # training window per fold
@@ -71,7 +71,7 @@ PIP_SIZE      = 0.0001               # 1 pip for EURUSD
 
 # ── Risk management ───────────────────────────────────────────────────────────
 ACCOUNT_BALANCE   = 10_000           # USD demo account size
-RISK_PER_TRADE    = 0.005            # 0.5% account risk per trade
+RISK_PER_TRADE    = 0.015            # 1.5% account risk per trade
 SL_ATR_MULT       = 1.5              # stop loss = 1.5 × ATR
 TP_ATR_MULT       = 3.0              # take profit = 3.0 × ATR (2:1 RR)
 MAX_OPEN_TRADES   = 1                # maximum concurrent positions
