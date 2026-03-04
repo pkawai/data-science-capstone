@@ -22,9 +22,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+import config
+
 TRADES_CSV = "trades.csv"
 STATE_JSON = "state.json"
 REFRESH_SECONDS = 60
+START_BALANCE = config.ACCOUNT_BALANCE
 
 # ── Auto-refresh ───────────────────────────────────────────────────────────────
 st.markdown(
@@ -117,7 +120,7 @@ def build_equity_curve(trades: pd.DataFrame, start_balance: float = 10_000) -> p
 def main():
     state  = load_state()
     trades = load_trades()
-    START_BALANCE = 10_000
+    START_BALANCE = config.ACCOUNT_BALANCE
 
     # ── Header ────────────────────────────────────────────────────────────────
     st.title("📈 EUR/USD Trading Bot — Live Monitor")
