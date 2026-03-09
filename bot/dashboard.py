@@ -123,19 +123,21 @@ def main():
     START_BALANCE = config.ACCOUNT_BALANCE
 
     # ── Header ────────────────────────────────────────────────────────────────
-    st.title("📈 EUR/USD Trading Bot — Live Monitor")
+    st.title("📈 Multi-Pair Trading Bot — Live Monitor")
 
-    bot_status = "🟢 Running" if state.get("bot_running") else "🔴 Offline"
+    bot_status  = "🟢 Running" if state.get("bot_running") else "🔴 Offline"
     last_update = state.get("last_updated", "N/A")
-    st.caption(f"Bot status: {bot_status}  |  Last updated: {last_update}  |  Auto-refreshes every {REFRESH_SECONDS}s")
+    pairs_str   = "  |  ".join(state.get("pairs_trading", config.PAIRS))
+    st.caption(f"Bot status: {bot_status}  |  Pairs: {pairs_str}  |  Last updated: {last_update}  |  Auto-refreshes every {REFRESH_SECONDS}s")
     st.divider()
 
     # ── Top KPI cards ─────────────────────────────────────────────────────────
-    balance    = state.get("balance", START_BALANCE)
-    daily_pnl  = state.get("daily_pnl", 0)
-    in_trade   = state.get("in_trade", False)
-    last_signal = state.get("last_signal", "N/A")
-    metrics    = compute_metrics(trades, START_BALANCE)
+    balance   = state.get("balance", START_BALANCE)
+    daily_pnl = state.get("daily_pnl", 0)
+    metrics   = compute_metrics(trades, START_BALANCE)
+
+    open_positions = state.get("open_positions", [])
+    n_open         = len(open_positions) if isinstance(open_positions, list) else 0
 
     total_pnl     = balance - START_BALANCE
     total_pnl_pct = (total_pnl / START_BALANCE) * 100
@@ -147,13 +149,10 @@ def main():
                   delta=f"{total_pnl:+,.0f} ({total_pnl_pct:+.1f}%)")
 
     with col2:
-        daily_color = "normal" if daily_pnl >= 0 else "inverse"
         st.metric("📅 Today's P&L", f"${daily_pnl:+,.0f}")
 
     with col3:
-        trade_label = "YES" if in_trade else "NO"
-        trade_icon  = "🔵" if in_trade else "⚪"
-        st.metric("📊 In Trade", f"{trade_icon} {trade_label}")
+        st.metric("📊 Open Trades", f"{n_open} / {len(config.PAIRS)}")
 
     with col4:
         st.metric("🎯 Win Rate",
@@ -161,7 +160,8 @@ def main():
                   delta=f"{metrics['total_trades']} trades")
 
     with col5:
-        st.metric("⚡ Last Signal", last_signal)
+        st.metric("⚡ Profit Factor",
+                  f"{metrics['profit_factor']:.2f}" if metrics['total_trades'] > 0 else "N/A")
 
     st.divider()
 
@@ -195,20 +195,22 @@ def main():
     left, right = st.columns([1, 1])
 
     with left:
-        st.subheader("Open Position")
-        pos = state.get("open_position")
-        if pos and in_trade:
-            direction_icon = "🟢 BUY" if pos.get("type") == 2 else "🔴 SELL"
-            st.markdown(f"**Direction:** {direction_icon}")
-            st.markdown(f"**Entry price:** `{pos.get('price_open', 'N/A'):.5f}`")
-            st.markdown(f"**Stop Loss:** `{pos.get('sl', 'N/A'):.5f}`")
-            st.markdown(f"**Take Profit:** `{pos.get('tp', 'N/A'):.5f}`")
-            st.markdown(f"**Volume:** `{pos.get('volume', 'N/A')} lots`")
-            profit = pos.get("profit", 0)
-            profit_color = "green" if profit >= 0 else "red"
-            st.markdown(f"**Floating P&L:** :{profit_color}[${profit:+.2f}]")
+        st.subheader("Open Positions")
+        open_positions = state.get("open_positions", [])
+        if open_positions:
+            for pos in open_positions:
+                direction_icon = "🟢 BUY" if pos.get("type") == 2 else "🔴 SELL"
+                profit = pos.get("profit", 0)
+                profit_color = "green" if profit >= 0 else "red"
+                st.markdown(
+                    f"**{pos.get('symbol', '?')}** {direction_icon}  "
+                    f"Entry: `{pos.get('price_open', 0)}`  "
+                    f"SL: `{pos.get('sl', 0)}`  "
+                    f"TP: `{pos.get('tp', 0)}`  "
+                    f"P&L: :{profit_color}[${profit:+.2f}]"
+                )
         else:
-            st.info("No open position right now.")
+            st.info("No open positions right now.")
 
     with right:
         st.subheader("Strategy Metrics")

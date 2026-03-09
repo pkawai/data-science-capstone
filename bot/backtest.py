@@ -15,16 +15,16 @@ from risk_manager import calculate_sl_tp
 
 warnings.filterwarnings("ignore")
 
-COST_PER_TRADE = (config.SPREAD_PIPS + config.SLIPPAGE_PIPS) * config.PIP_SIZE
+
+def _cost_per_trade(symbol: str) -> float:
+    spread = config.PAIR_CONFIGS[symbol]["spread_pips"]
+    return (spread + config.SLIPPAGE_PIPS) * config.PAIR_CONFIGS[symbol]["pip_size"]
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def walk_forward_backtest(raw_df: pd.DataFrame) -> dict:
-    """
-    Walk-forward backtest with triple barrier labels, ADX filter,
-    volatility spike filter, and ATR trailing stop + breakeven.
-    """
+def walk_forward_backtest(raw_df: pd.DataFrame, symbol: str) -> dict:
+    """Walk-forward backtest for a specific symbol."""
     df = build_features(raw_df)
     df["Signal"] = create_labels(df, method="triple_barrier")
     df = df.dropna(subset=["Signal"])
@@ -39,28 +39,21 @@ def walk_forward_backtest(raw_df: pd.DataFrame) -> dict:
 
     for i, (train_df, test_df) in enumerate(folds):
         feat_cols = get_feature_columns(train_df)
-        X_train   = train_df[feat_cols]
-        y_train   = train_df["Signal"]
-        X_test    = test_df[feat_cols]
-        y_test    = test_df["Signal"]
+        model     = train(train_df[feat_cols], train_df["Signal"])
+        proba     = predict_proba(model, test_df[feat_cols])
+        y_pred    = proba.argmax(axis=1)
+        conf      = proba.max(axis=1)
 
-        model  = train(X_train, y_train)
-        proba  = predict_proba(model, X_test)
-        y_pred = proba.argmax(axis=1)
-        conf   = proba.max(axis=1)
-
-        # ── Filters ────────────────────────────────────────────────────────
-        mask_conf    = conf   >= config.CONFIDENCE_THRESHOLD
+        mask_conf    = conf >= config.CONFIDENCE_THRESHOLD
         mask_session = test_df.index.hour.isin(config.ACTIVE_HOURS)
-        mask_adx     = test_df["ADX"]       > config.ADX_THRESHOLD
-        mask_vol     = test_df["Vol_ratio"]  < config.VOL_RATIO_MAX
+        mask_adx     = test_df["ADX"]      > config.ADX_THRESHOLD
+        mask_vol     = test_df["Vol_ratio"] < config.VOL_RATIO_MAX
+        active       = (mask_conf & mask_session & mask_adx & mask_vol).values
 
-        active = (mask_conf & mask_session & mask_adx & mask_vol).values
-
-        trades = _simulate_trades(test_df.reset_index(), y_pred, conf, active)
+        trades = _simulate_trades(test_df.reset_index(), y_pred, conf, active, symbol)
         all_trades.extend(trades)
 
-        f1       = f1_score(y_test, y_pred, average="macro", zero_division=0)
+        f1 = f1_score(test_df["Signal"], y_pred, average="macro", zero_division=0)
         win_rate, pf = _trade_metrics(trades)
 
         result = {
@@ -79,7 +72,7 @@ def walk_forward_backtest(raw_df: pd.DataFrame) -> dict:
               f"WR={win_rate:.1%}  PF={pf:.2f}  F1={f1:.3f}  "
               f"({result['test_from']} → {result['test_to']})")
 
-    equity_curve = _build_equity_curve(all_trades, config.ACCOUNT_BALANCE)
+    equity_curve = _build_equity_curve(all_trades, config.ACCOUNT_BALANCE, symbol)
     summary      = _summarise(fold_results, equity_curve)
     return {
         "fold_results": fold_results,
@@ -90,38 +83,33 @@ def walk_forward_backtest(raw_df: pd.DataFrame) -> dict:
 
 
 def plot_equity_curve(equity_curve: pd.Series,
-                      save_path: str | None = "equity_curve.png") -> None:
+                      symbol: str = "",
+                      save_path: str | None = None) -> None:
+    path = save_path or f"equity_curve_{symbol}.png"
     fig, ax = plt.subplots(figsize=(12, 5))
     equity_curve.plot(ax=ax, color="steelblue", linewidth=1.5)
     ax.axhline(config.ACCOUNT_BALANCE, color="grey", linestyle="--",
                linewidth=0.8, label="Starting balance")
-    ax.set_title("Walk-Forward Equity Curve (EUR/USD H1) — Improved")
+    ax.set_title(f"Walk-Forward Equity Curve — {symbol} H1")
     ax.set_ylabel("Account Balance (USD)")
-    ax.set_xlabel("Date")
     ax.legend()
     plt.tight_layout()
-    if save_path:
-        fig.savefig(save_path, dpi=150)
-        print(f"[backtest] Equity curve saved → {save_path}")
+    fig.savefig(path, dpi=150)
+    print(f"[backtest] Equity curve saved → {path}")
     plt.show()
 
 
-def print_summary(results: dict) -> None:
+def print_summary(results: dict, symbol: str = "") -> None:
     s = results["summary"]
-    print("\n" + "=" * 55)
-    print("  WALK-FORWARD BACKTEST SUMMARY")
-    print("=" * 55)
-    folds  = results["fold_results"]
-    header = (f"{'Fold':>4} {'Test period':>23} "
-              f"{'Trades':>6} {'WR':>6} {'PF':>6} {'F1':>6}")
-    print(header)
-    print("-" * 55)
-    for r in folds:
-        print(f"  {r['fold']:>2}  "
+    print(f"\n{'='*55}")
+    print(f"  WALK-FORWARD BACKTEST SUMMARY — {symbol}")
+    print(f"{'='*55}")
+    for r in results["fold_results"]:
+        print(f"  Fold {r['fold']:>2}  "
               f"{str(r['test_from'])+'→'+str(r['test_to']):>23}  "
               f"{r['n_trades']:>5}  {r['win_rate']:>5.1%}  "
               f"{r['profit_factor']:>5.2f}  {r['f1_macro']:>5.3f}")
-    print("=" * 55)
+    print(f"{'='*55}")
     print(f"  Total trades   : {s['total_trades']}")
     print(f"  Avg win rate   : {s['avg_win_rate']:.1%}")
     print(f"  Avg profit fac : {s['avg_profit_factor']:.2f}")
@@ -129,48 +117,40 @@ def print_summary(results: dict) -> None:
     print(f"  Sharpe ratio   : {s['sharpe']:.2f}")
     print(f"  Max drawdown   : {s['max_drawdown']:.1%}")
     print(f"  Final balance  : ${s['final_balance']:,.0f}")
-    print("=" * 55 + "\n")
+    print(f"{'='*55}\n")
 
 
 # ── Trade simulation ───────────────────────────────────────────────────────────
 
-def _simulate_trades(test_df, predictions, confidences, active_mask):
-    """
-    Simulate trades with:
-    - SL/TP exit
-    - Breakeven: move SL to entry once price is up 1R
-    - Trailing stop: trail at 1.5×ATR after breakeven
-    - Session + ADX + vol filters already applied via active_mask
-    """
-    trades   = []
-    in_trade = False
+def _simulate_trades(test_df, predictions, confidences, active_mask, symbol):
+    trades     = []
+    in_trade   = False
     entry_data = {}
+    cost       = _cost_per_trade(symbol)
 
     for i in range(len(test_df) - config.TB_HORIZON):
         row = test_df.iloc[i]
 
-        # ── Manage open trade ─────────────────────────────────────────────
         if in_trade:
-            result = _check_exit(entry_data, test_df, i)
+            result = _check_exit(entry_data, test_df, i, symbol)
             if result is not None:
-                pnl, close_reason, entry_data = result
+                pnl, reason, entry_data = result
                 trades.append({
                     "entry_date":   entry_data["date"],
                     "exit_date":    row.get("Datetime", row.name),
                     "direction":    entry_data["direction"],
                     "entry":        entry_data["entry"],
-                    "pnl":          pnl - COST_PER_TRADE,
-                    "close_reason": close_reason,
+                    "pnl":          pnl - cost / config.PAIR_CONFIGS[symbol]["pip_size"],
+                    "close_reason": reason,
                 })
                 in_trade = False
 
-        # ── Open new trade ────────────────────────────────────────────────
         if not in_trade and active_mask[i]:
             signal = int(predictions[i])
             if signal in (0, 2):
                 atr   = row.get("ATR", 0.001)
                 entry = row["Close"]
-                sl, tp = calculate_sl_tp(entry, signal, atr)
+                sl, tp = calculate_sl_tp(entry, signal, atr, symbol)
                 in_trade   = True
                 entry_data = {
                     "date":         row.get("Datetime", row.name),
@@ -187,13 +167,8 @@ def _simulate_trades(test_df, predictions, confidences, active_mask):
     return trades
 
 
-def _check_exit(entry_data, test_df, current_idx):
-    """
-    Check one candle at a time for SL/TP hit.
-    Implements breakeven and trailing stop.
-    Returns (pnl, reason, updated_entry_data) or None if still open.
-    """
-    pip       = config.PIP_SIZE
+def _check_exit(entry_data, test_df, current_idx, symbol):
+    pip_size  = config.PAIR_CONFIGS[symbol]["pip_size"]
     direction = entry_data["direction"]
     entry     = entry_data["entry"]
     sl        = entry_data["sl"]
@@ -202,59 +177,38 @@ def _check_exit(entry_data, test_df, current_idx):
     atr       = entry_data["atr"]
     breakeven = entry_data["breakeven"]
 
-    # Look at next candle
     next_idx = current_idx + 1
     if next_idx >= len(test_df):
         return None
 
-    bar  = test_df.iloc[next_idx]
-    high = bar["High"]
-    low  = bar["Low"]
+    bar   = test_df.iloc[next_idx]
+    high  = bar["High"]
+    low   = bar["Low"]
     close = bar["Close"]
 
-    if direction == 2:   # Long
-        # Check TP first (optimistic — could hit either in same candle)
-        if high >= tp:
-            return (tp - entry) / pip, "TP", entry_data
-        if low <= sl:
-            return (sl - entry) / pip, "SL", entry_data
-
-        # Breakeven: move SL to entry once price is up 1R
+    if direction == 2:
+        if high >= tp: return (tp - entry) / pip_size, "TP", entry_data
+        if low  <= sl: return (sl - entry) / pip_size, "SL", entry_data
         if not breakeven and (close - entry) >= init_risk:
-            entry_data["sl"]        = entry
-            entry_data["breakeven"] = True
-
-        # Trailing stop: after breakeven, trail at 1.5×ATR
+            entry_data["sl"] = entry; entry_data["breakeven"] = True
         if breakeven:
-            trail_sl = close - config.SL_ATR_MULT * atr
-            if trail_sl > entry_data["sl"]:
-                entry_data["sl"] = trail_sl
-
-    else:   # Short
-        if low <= tp:
-            return (entry - tp) / pip, "TP", entry_data
-        if high >= sl:
-            return (entry - sl) / pip, "SL", entry_data
-
+            trail = close - config.SL_ATR_MULT * atr
+            if trail > entry_data["sl"]: entry_data["sl"] = trail
+    else:
+        if low  <= tp: return (entry - tp) / pip_size, "TP", entry_data
+        if high >= sl: return (entry - sl) / pip_size, "SL", entry_data
         if not breakeven and (entry - close) >= init_risk:
-            entry_data["sl"]        = entry
-            entry_data["breakeven"] = True
-
+            entry_data["sl"] = entry; entry_data["breakeven"] = True
         if breakeven:
-            trail_sl = close + config.SL_ATR_MULT * atr
-            if trail_sl < entry_data["sl"]:
-                entry_data["sl"] = trail_sl
+            trail = close + config.SL_ATR_MULT * atr
+            if trail < entry_data["sl"]: entry_data["sl"] = trail
 
-    # Force-close at horizon limit
-    candles_open = next_idx - entry_data["start_idx"]
-    if candles_open >= config.TB_HORIZON:
-        pnl = (close - entry) / pip if direction == 2 else (entry - close) / pip
+    if (next_idx - entry_data["start_idx"]) >= config.TB_HORIZON:
+        pnl = (close - entry) / pip_size if direction == 2 else (entry - close) / pip_size
         return pnl, "HORIZON", entry_data
 
     return None
 
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _generate_folds(df):
     folds       = []
@@ -263,13 +217,11 @@ def _generate_folds(df):
     train_delta = timedelta(days=config.TRAIN_MONTHS * 30)
     test_delta  = timedelta(days=config.TEST_MONTHS  * 30)
     step_delta  = timedelta(days=config.STEP_MONTHS  * 30)
-
-    fold_start = start
+    fold_start  = start
     while True:
         train_end = fold_start + train_delta
         test_end  = train_end  + test_delta
-        if test_end > end:
-            break
+        if test_end > end: break
         train_df = df[(df.index >= fold_start) & (df.index < train_end)]
         test_df  = df[(df.index >= train_end)  & (df.index < test_end)]
         if len(train_df) > 100 and len(test_df) > 20:
@@ -279,44 +231,38 @@ def _generate_folds(df):
 
 
 def _trade_metrics(trades):
-    if not trades:
-        return 0.0, 0.0
-    pnls         = [t["pnl"] for t in trades]
-    wins         = [p for p in pnls if p > 0]
-    losses       = [p for p in pnls if p < 0]
-    win_rate     = len(wins) / len(pnls)
-    gross_profit = sum(wins)
-    gross_loss   = abs(sum(losses)) if losses else 1e-9
-    return win_rate, gross_profit / gross_loss
+    if not trades: return 0.0, 0.0
+    pnls = [t["pnl"] for t in trades]
+    wins = [p for p in pnls if p > 0]
+    losses = [p for p in pnls if p < 0]
+    win_rate = len(wins) / len(pnls)
+    pf = sum(wins) / abs(sum(losses)) if losses else 0.0
+    return win_rate, pf
 
 
-def _build_equity_curve(trades, start_balance):
-    if not trades:
-        return pd.Series([start_balance])
-    records = sorted(trades, key=lambda t: t["exit_date"])
-    balance = start_balance
-    dates   = [records[0]["entry_date"]]
-    values  = [balance]
+def _build_equity_curve(trades, start_balance, symbol):
+    if not trades: return pd.Series([start_balance])
+    pip_value = config.PAIR_CONFIGS[symbol]["pip_value_usd"]
+    records   = sorted(trades, key=lambda t: t["exit_date"])
+    balance  = start_balance
+    dates    = [records[0]["entry_date"]]
+    values   = [balance]
     for t in records:
-        balance += t["pnl"] * 10   # $10/pip for EURUSD standard lot
+        balance += t["pnl"] * pip_value
         dates.append(t["exit_date"])
         values.append(balance)
     return pd.Series(values, index=dates)
 
 
 def _summarise(fold_results, equity_curve):
-    total_trades = sum(r["n_trades"]      for r in fold_results)
-    avg_wr       = np.mean([r["win_rate"]       for r in fold_results])
-    avg_pf       = np.mean([r["profit_factor"]  for r in fold_results])
-    avg_f1       = np.mean([r["f1_macro"]       for r in fold_results])
-
-    eq        = equity_curve
-    daily_ret = eq.pct_change().dropna()
-    sharpe    = (daily_ret.mean() / daily_ret.std() * np.sqrt(252)
-                 if daily_ret.std() > 0 else 0.0)
-    peak   = eq.cummax()
-    max_dd = ((eq - peak) / peak).min()
-
+    total_trades = sum(r["n_trades"] for r in fold_results)
+    avg_wr  = np.mean([r["win_rate"]      for r in fold_results])
+    avg_pf  = np.mean([r["profit_factor"] for r in fold_results])
+    avg_f1  = np.mean([r["f1_macro"]      for r in fold_results])
+    eq      = equity_curve
+    daily   = eq.pct_change().dropna()
+    sharpe  = (daily.mean() / daily.std() * np.sqrt(252)) if daily.std() > 0 else 0.0
+    max_dd  = ((eq - eq.cummax()) / eq.cummax()).min()
     return {
         "total_trades":      total_trades,
         "avg_win_rate":      avg_wr,

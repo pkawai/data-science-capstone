@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# bot.py — Main live trading loop (run on Windows with MT5)
+# bot.py — Multi-pair live trading loop (run on Windows with MT5)
 #
 # Usage (Windows):
 #   1. Open MetaTrader 5 and log in to your demo account.
@@ -35,12 +35,12 @@ TRADES_CSV = "trades.csv"
 STATE_JSON = "state.json"
 
 TRADE_FIELDS = [
-    "time", "direction", "entry", "sl", "tp",
+    "time", "symbol", "direction", "entry", "sl", "tp",
     "lots", "ticket", "confidence", "adx", "atr",
 ]
 
 
-# ── Data writers (for dashboard) ───────────────────────────────────────────────
+# ── Data writers ───────────────────────────────────────────────────────────────
 
 def _init_trades_csv():
     if not os.path.exists(TRADES_CSV):
@@ -60,43 +60,123 @@ def _write_state(state: dict):
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _is_active_session(utc_hour: int) -> bool:
-    return utc_hour in config.ACTIVE_HOURS
-
-
 def _wait_for_candle_close() -> None:
     now = datetime.now(timezone.utc)
-    seconds_to_next_hour = 3600 - (now.minute * 60 + now.second)
-    wait = seconds_to_next_hour + 5
+    wait = 3600 - (now.minute * 60 + now.second) + 5
     logger.info(f"Waiting {wait}s for candle close…")
     time.sleep(wait)
 
 
-def _get_daily_pnl(account_balance: float) -> float:
+# ── Per-pair logic ─────────────────────────────────────────────────────────────
+
+def _process_pair(symbol: str, model, current_balance: float, utc_hour: int) -> None:
+    """Run one full cycle for a single pair."""
+    label_map = {0: "SELL", 1: "HOLD", 2: "BUY"}
+
+    # ── Check if already in trade for this pair ────────────────────────────
+    open_positions = mt5ex.get_open_positions(symbol)
+    if len(open_positions) >= config.MAX_OPEN_TRADES:
+        logger.info(f"[{symbol}] Already in trade. Skipping.")
+        return
+
+    # ── Fetch data + features ──────────────────────────────────────────────
     try:
-        return mt5ex.get_account_balance() - account_balance
-    except Exception:
-        return 0.0
+        raw_df = mt5ex.get_latest_candles(symbol, n=200)
+        df     = build_features(raw_df)
+    except Exception as e:
+        logger.error(f"[{symbol}] Data error: {e}")
+        return
+
+    if len(df) < 10:
+        logger.warning(f"[{symbol}] Not enough feature rows. Skipping.")
+        return
+
+    feat_cols = get_feature_columns(df)
+    X         = df[feat_cols]
+    last_row  = df.iloc[-1]
+    adx_value = last_row.get("ADX", 0)
+    vol_ratio = last_row.get("Vol_ratio", 1)
+
+    # ── Regime / volatility filters ────────────────────────────────────────
+    if adx_value < config.ADX_THRESHOLD:
+        logger.info(f"[{symbol}] ADX={adx_value:.1f} — ranging, skip.")
+        return
+    if vol_ratio > config.VOL_RATIO_MAX:
+        logger.info(f"[{symbol}] Vol spike ({vol_ratio:.2f}), skip.")
+        return
+
+    # ── Prediction ─────────────────────────────────────────────────────────
+    signal, confidence = predict_signal(model, X)
+    logger.info(f"[{symbol}] Signal: {label_map[signal]}  "
+                f"Confidence: {confidence:.1%}  ADX: {adx_value:.1f}")
+
+    if signal == 1:
+        return   # Hold
+
+    # ── Calculate SL / TP / lots ────────────────────────────────────────────
+    atr      = last_row["ATR"]
+    ask, bid = mt5ex.get_current_price(symbol)
+    entry    = ask if signal == 2 else bid
+    sl, tp   = calculate_sl_tp(entry, signal, atr, symbol)
+    lots     = calculate_position_size(current_balance, atr, symbol)
+
+    logger.info(f"[{symbol}] Placing {label_map[signal]}  "
+                f"entry={entry}  sl={sl}  tp={tp}  lots={lots}")
+
+    # ── Execute ────────────────────────────────────────────────────────────
+    try:
+        ticket = mt5ex.place_order(
+            symbol=symbol,
+            direction=signal,
+            lots=lots,
+            sl=sl,
+            tp=tp,
+            comment=f"bot_{symbol}_{label_map[signal].lower()}_{confidence:.2f}",
+        )
+        logger.info(f"[{symbol}] Order filled. Ticket: {ticket}")
+        _write_trade({
+            "time":       datetime.now(timezone.utc).isoformat(),
+            "symbol":     symbol,
+            "direction":  label_map[signal],
+            "entry":      entry,
+            "sl":         sl,
+            "tp":         tp,
+            "lots":       lots,
+            "ticket":     ticket,
+            "confidence": round(confidence, 4),
+            "adx":        round(adx_value, 2),
+            "atr":        round(atr, 5),
+        })
+    except RuntimeError as e:
+        logger.error(f"[{symbol}] Order failed: {e}")
 
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
 
 def run():
     logger.info("=" * 55)
-    logger.info("  EUR/USD H1 Trading Bot — Starting")
+    logger.info("  Multi-Pair Trading Bot — Starting")
+    logger.info(f"  Pairs: {config.PAIRS}")
     logger.info("=" * 55)
 
     mt5ex.connect()
-    logger.info("MT5 connected.")
-
-    model = load(config.MODEL_PATH)
-    logger.info(f"Model loaded from {config.MODEL_PATH}")
-
     _init_trades_csv()
+
+    # Load all models at startup
+    models = {}
+    for symbol in config.PAIRS:
+        try:
+            models[symbol] = load(symbol)
+        except Exception as e:
+            logger.error(f"Could not load model for {symbol}: {e}. Skipping this pair.")
+
+    if not models:
+        raise RuntimeError("No models loaded. Run train.py for each pair first.")
+
+    logger.info(f"Models loaded: {list(models.keys())}")
 
     account_balance = config.ACCOUNT_BALANCE
     daily_start_day = datetime.now(timezone.utc).date()
-    last_signal     = "STARTING"
 
     try:
         while True:
@@ -108,125 +188,50 @@ def run():
 
             if today != daily_start_day:
                 daily_start_day = today
-                logger.info("New trading day — daily P&L reset.")
+                logger.info("New trading day.")
 
-            # ── Get current state ─────────────────────────────────────────
+            # ── Get current state ────────────────────────────────────────
             try:
                 current_balance = mt5ex.get_account_balance()
             except Exception:
                 current_balance = account_balance
 
             live_daily_pnl = current_balance - account_balance
-            open_positions = mt5ex.get_open_positions()
-            in_trade       = len(open_positions) > 0
-            current_pos    = open_positions[0] if in_trade else None
+            all_positions  = mt5ex.get_open_positions()
 
-            # ── Write state for dashboard ─────────────────────────────────
+            # ── Write state for dashboard ────────────────────────────────
             _write_state({
-                "last_updated":  now_utc.isoformat(),
-                "balance":       current_balance,
-                "daily_pnl":     live_daily_pnl,
-                "in_trade":      in_trade,
-                "open_position": current_pos,
-                "last_signal":   last_signal,
-                "utc_hour":      utc_hour,
-                "bot_running":   True,
+                "last_updated":   now_utc.isoformat(),
+                "balance":        current_balance,
+                "daily_pnl":      live_daily_pnl,
+                "open_positions": all_positions,
+                "pairs_trading":  list(models.keys()),
+                "utc_hour":       utc_hour,
+                "bot_running":    True,
             })
 
-            # ── Daily loss limit ──────────────────────────────────────────
+            # ── Daily loss limit ─────────────────────────────────────────
             if check_daily_limit(live_daily_pnl, account_balance):
                 logger.warning(f"Daily loss limit hit ({live_daily_pnl:.0f} USD). Skipping.")
-                last_signal = "DAILY LIMIT HIT"
                 continue
 
-            # ── Session filter ────────────────────────────────────────────
-            if not _is_active_session(utc_hour):
+            # ── Session filter ───────────────────────────────────────────
+            if utc_hour not in config.ACTIVE_HOURS:
                 logger.info(f"Outside active session (UTC {utc_hour:02d}:xx). Skipping.")
-                last_signal = "OUT OF SESSION"
                 continue
 
-            # ── Already in trade ──────────────────────────────────────────
-            if in_trade:
-                logger.info(f"Already in trade (ticket={current_pos['ticket']}). Skipping.")
-                continue
-
-            # ── Fetch data + features ─────────────────────────────────────
-            try:
-                raw_df = mt5ex.get_latest_candles(n=200)
-                df     = build_features(raw_df)
-            except Exception as e:
-                logger.error(f"Data/feature error: {e}")
-                continue
-
-            if len(df) < 10:
-                logger.warning("Not enough rows after feature build. Skipping.")
-                continue
-
-            feat_cols = get_feature_columns(df)
-            X         = df[feat_cols]
-            last_row  = df.iloc[-1]
-            adx_value = last_row.get("ADX", 0)
-            vol_ratio = last_row.get("Vol_ratio", 1)
-
-            # ── Regime / volatility filters ───────────────────────────────
-            if adx_value < config.ADX_THRESHOLD:
-                logger.info(f"ADX={adx_value:.1f} — ranging market, skip.")
-                last_signal = f"SKIP (ADX={adx_value:.1f})"
-                continue
-            if vol_ratio > config.VOL_RATIO_MAX:
-                logger.info(f"Vol_ratio={vol_ratio:.2f} — vol spike, skip.")
-                last_signal = f"SKIP (vol spike)"
-                continue
-
-            # ── Prediction ────────────────────────────────────────────────
-            signal, confidence = predict_signal(model, X)
-            label_map = {0: "SELL", 1: "HOLD", 2: "BUY"}
-            last_signal = f"{label_map[signal]} ({confidence:.1%})"
-
-            logger.info(f"Signal: {label_map[signal]}  Confidence: {confidence:.1%}  ADX: {adx_value:.1f}")
-
-            if signal == 1:
-                logger.info("Hold — no trade.")
-                continue
-
-            # ── Calculate SL / TP / lots ──────────────────────────────────
-            atr      = last_row["ATR"]
-            ask, bid = mt5ex.get_current_price()
-            entry    = ask if signal == 2 else bid
-            sl, tp   = calculate_sl_tp(entry, signal, atr)
-            lots     = calculate_position_size(current_balance, atr)
-
-            logger.info(f"Placing {label_map[signal]}  entry={entry:.5f}  sl={sl:.5f}  tp={tp:.5f}  lots={lots}")
-
-            # ── Execute ───────────────────────────────────────────────────
-            try:
-                ticket = mt5ex.place_order(
-                    direction=signal,
-                    lots=lots,
-                    sl=sl,
-                    tp=tp,
-                    comment=f"bot_{label_map[signal].lower()}_{confidence:.2f}",
-                )
-                logger.info(f"Order filled. Ticket: {ticket}")
-                _write_trade({
-                    "time":       now_utc.isoformat(),
-                    "direction":  label_map[signal],
-                    "entry":      entry,
-                    "sl":         sl,
-                    "tp":         tp,
-                    "lots":       lots,
-                    "ticket":     ticket,
-                    "confidence": round(confidence, 4),
-                    "adx":        round(adx_value, 2),
-                    "atr":        round(atr, 5),
-                })
-            except RuntimeError as e:
-                logger.error(f"Order failed: {e}")
+            # ── Process each pair ────────────────────────────────────────
+            for symbol, model in models.items():
+                try:
+                    _process_pair(symbol, model, current_balance, utc_hour)
+                except Exception as e:
+                    logger.error(f"[{symbol}] Unexpected error: {e}")
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt — shutting down.")
     finally:
-        _write_state({"bot_running": False, "last_updated": datetime.now(timezone.utc).isoformat()})
+        _write_state({"bot_running": False,
+                      "last_updated": datetime.now(timezone.utc).isoformat()})
         mt5ex.disconnect()
         logger.info("Bot stopped.")
 
