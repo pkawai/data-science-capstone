@@ -2,7 +2,7 @@
 # Edit values here; nothing is hardcoded elsewhere.
 
 # ── Pairs ──────────────────────────────────────────────────────────────────────
-PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD"]
+PAIRS = ["EURUSD", "GBPUSD", "USDJPY"]
 
 PAIR_CONFIGS = {
     "EURUSD": {
