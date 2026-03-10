@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkpoint 2: EDA — Forex Auto-Trading Bot</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .slideshow {
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+  }
+
+  .slide {
+    display: none;
+    width: 100%;
+    height: 100%;
+    padding: 60px 80px;
+    flex-direction: column;
+    justify-content: center;
+    position: absolute;
+    top: 0; left: 0;
+    animation: fadeIn 0.3s ease;
+  }
+
+  .slide.active { display: flex; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Title slide ── */
+  .slide-title {
+    background: linear-gradient(135deg, #0f1117 0%, #1a1f2e 100%);
+    align-items: center;
+    text-align: center;
+  }
+  .slide-title .tag {
+    background: #3b82f6;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    padding: 6px 18px;
+    border-radius: 20px;
+    margin-bottom: 28px;
+  }
+  .slide-title h1 {
+    font-size: 52px;
+    font-weight: 800;
+    line-height: 1.15;
+    margin-bottom: 20px;
+    background: linear-gradient(90deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .slide-title .subtitle {
+    font-size: 20px;
+    color: #94a3b8;
+    margin-bottom: 40px;
+  }
+  .slide-title .meta {
+    display: flex;
+    gap: 40px;
+    font-size: 14px;
+    color: #64748b;
+  }
+  .slide-title .meta span { display: flex; align-items: center; gap: 8px; }
+
+  /* ── Content slides ── */
+  .slide-content { background: #0f1117; }
+
+  .slide-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+  .slide-num {
+    background: #3b82f6;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  h2 {
+    font-size: 32px;
+    font-weight: 700;
+    color: #f1f5f9;
+  }
+
+  /* Cards */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: #1e2535;
+    border: 1px solid #2d3748;
+    border-radius: 14px;
+    padding: 24px;
+  }
+  .card .icon { font-size: 28px; margin-bottom: 12px; }
+  .card h3 { font-size: 15px; font-weight: 600; color: #60a5fa; margin-bottom: 8px; }
+  .card p  { font-size: 14px; color: #94a3b8; line-height: 1.6; }
+
+  /* Two-column */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 40px;
+    align-items: center;
+  }
+  .two-col.wide { grid-template-columns: 1.2fr 0.8fr; }
+
+  /* Image */
+  .viz-img {
+    width: 100%;
+    border-radius: 12px;
+    border: 1px solid #2d3748;
+    object-fit: contain;
+    max-height: 380px;
+  }
+
+  /* Text list */
+  .points { list-style: none; display: flex; flex-direction: column; gap: 16px; }
+  .points li {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    font-size: 16px;
+    color: #cbd5e1;
+    line-height: 1.5;
+  }
+  .points li .dot {
+    width: 8px; height: 8px;
+    background: #3b82f6;
+    border-radius: 50%;
+    margin-top: 7px;
+    flex-shrink: 0;
+  }
+  .points li strong { color: #f1f5f9; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th {
+    background: #1e2535;
+    color: #60a5fa;
+    font-weight: 600;
+    padding: 12px 16px;
+    text-align: left;
+    border-bottom: 2px solid #3b82f6;
+  }
+  td { padding: 11px 16px; border-bottom: 1px solid #1e2535; color: #cbd5e1; }
+  tr:hover td { background: #1a2030; }
+
+  /* Stats row */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin-bottom: 32px;
+  }
+  .stat {
+    background: #1e2535;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    border: 1px solid #2d3748;
+  }
+  .stat .val { font-size: 32px; font-weight: 800; color: #60a5fa; }
+  .stat .lbl { font-size: 13px; color: #64748b; margin-top: 4px; }
+
+  /* Insight chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+  .chip {
+    background: #1e2535;
+    border: 1px solid #3b82f6;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    color: #93c5fd;
+    line-height: 1.4;
+  }
+
+  /* Next steps */
+  .roadmap { display: flex; flex-direction: column; gap: 16px; }
+  .step {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: #1e2535;
+    border-radius: 12px;
+    padding: 18px 24px;
+    border: 1px solid #2d3748;
+  }
+  .step.done { border-color: #22c55e; }
+  .step.next { border-color: #3b82f6; }
+  .step-badge {
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .done .step-badge  { background: #14532d; color: #4ade80; }
+  .next .step-badge  { background: #1e3a8a; color: #93c5fd; }
+  .later .step-badge { background: #1e2535; color: #64748b; }
+  .step-text h4 { font-size: 16px; font-weight: 600; color: #f1f5f9; }
+  .step-text p  { font-size: 13px; color: #64748b; margin-top: 2px; }
+
+  /* Nav */
+  .nav {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: #1e2535cc;
+    backdrop-filter: blur(12px);
+    border: 1px solid #2d3748;
+    border-radius: 40px;
+    padding: 10px 20px;
+    z-index: 100;
+  }
+  .nav button {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: all 0.15s;
+  }
+  .nav button:hover { background: #2d3748; color: #f1f5f9; }
+  .nav button:disabled { opacity: 0.3; cursor: default; }
+  .nav .counter { font-size: 13px; color: #64748b; min-width: 50px; text-align: center; }
+
+  .hint {
+    position: fixed;
+    bottom: 30px;
+    right: 40px;
+    font-size: 12px;
+    color: #374151;
+  }
+</style>
+</head>
+<body>
+
+<div class="slideshow">
+
+  <!-- 1. TITLE -->
+  <div class="slide slide-title active">
+    <div class="tag">Checkpoint 2 — EDA</div>
+    <h1>Forex Auto-Trading Bot<br>EUR/USD</h1>
+    <p class="subtitle">Exploratory Data Analysis</p>
+    <div class="meta">
+      <span>👤 Orgil BK</span>
+      <span>📚 Data Science Capstone</span>
+      <span>🏫 AUM Spring 2026</span>
+      <span>👨‍🏫 Robert Ritz</span>
+    </div>
+  </div>
+
+  <!-- 2. PROBLEM -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">1</div>
+      <h2>The Problem</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="icon">😴</div>
+        <h3>24/7 Market</h3>
+        <p>Forex trades 24 hours a day, 5 days a week. The best sessions (London, New York) happen while I'm asleep in Mongolia (GMT+8).</p>
+      </div>
+      <div class="card">
+        <div class="icon">😰</div>
+        <h3>Emotional Trading</h3>
+        <p>Manual trading leads to fear and greed-based decisions. Consistent execution of a strategy is nearly impossible by hand.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🤖</div>
+        <h3>The Solution</h3>
+        <p>An ML model that reads technical indicators every hour and classifies the market as <strong>Buy</strong>, <strong>Sell</strong>, or <strong>Hold</strong> — then executes automatically via MT5.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📊</div>
+        <h3>Why EDA First?</h3>
+        <p>Before training any model, I need to understand the data — its patterns, distributions, and which features actually carry predictive signal.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. DATA -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">2</div>
+      <h2>Data Acquisition</h2>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="val">~13K</div><div class="lbl">Hourly candles</div></div>
+      <div class="stat"><div class="val">2 yrs</div><div class="lbl">Historical data</div></div>
+      <div class="stat"><div class="val">H1</div><div class="lbl">Timeframe</div></div>
+      <div class="stat"><div class="val">5</div><div class="lbl">OHLCV columns</div></div>
+    </div>
+    <table>
+      <tr><th>Column</th><th>Description</th><th>Example</th></tr>
+      <tr><td>Open</td><td>Price at the start of the hour</td><td>1.08234</td></tr>
+      <tr><td>High</td><td>Highest price during the hour</td><td>1.08301</td></tr>
+      <tr><td>Low</td><td>Lowest price during the hour</td><td>1.08190</td></tr>
+      <tr><td>Close</td><td>Price at the end of the hour</td><td>1.08267</td></tr>
+      <tr><td>Volume</td><td>Always 0 for forex (no central exchange)</td><td>0</td></tr>
+    </table>
+    <p style="margin-top:16px; font-size:13px; color:#475569;">
+      Source: Yahoo Finance via <code style="color:#60a5fa">yfinance</code> · Instrument: <code style="color:#60a5fa">EURUSD=X</code> · No API key required
+    </p>
+  </div>
+
+  <!-- 4. DATA QUALITY -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">3</div>
+      <h2>Data Quality</h2>
+    </div>
+    <div class="two-col">
+      <ul class="points">
+        <li><div class="dot"></div><div><strong>No missing values</strong> in OHLC columns — clean fetch from Yahoo Finance.</div></li>
+        <li><div class="dot"></div><div><strong>No duplicate timestamps</strong> — each row is a unique hourly candle.</div></li>
+        <li><div class="dot"></div><div><strong>OHLC sanity checks passed</strong> — High ≥ Low, Open and Close within range on all rows.</div></li>
+        <li><div class="dot"></div><div><strong>Volume = 0 is expected</strong> — forex has no centralized exchange, so tick volume from Yahoo is always 0.</div></li>
+        <li><div class="dot"></div><div><strong>Price "outliers" kept</strong> — large moves (e.g., macro events) are real data, not errors. Removing them would bias the model.</div></li>
+      </ul>
+      <div class="card" style="text-align:center">
+        <div style="font-size:64px; margin-bottom:16px;">✅</div>
+        <h3 style="font-size:18px; margin-bottom:8px;">Dataset is Clean</h3>
+        <p>No rows removed. Ready for feature engineering.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. FEATURE ENGINEERING -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">4</div>
+      <h2>Feature Engineering</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <div class="icon">📈</div>
+        <h3>Moving Averages</h3>
+        <p>MA-20, MA-50, EMA-20 — capture the trend direction over different time windows.</p>
+      </div>
+      <div class="card">
+        <div class="icon">💪</div>
+        <h3>RSI (14)</h3>
+        <p>Relative Strength Index — measures momentum. Above 70 = overbought, below 30 = oversold.</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚡</div>
+        <h3>MACD</h3>
+        <p>Moving Average Convergence Divergence — shows trend strength and direction changes.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🎯</div>
+        <h3>Bollinger Bands</h3>
+        <p>Upper/lower bands around MA-20. Price near the bands signals potential reversals.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🌊</div>
+        <h3>ATR (14)</h3>
+        <p>Average True Range — measures volatility. Higher ATR = larger price swings expected.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🏷️</div>
+        <h3>Labels</h3>
+        <p>Buy / Sell / Hold based on price movement 5 candles ahead with a 0.1% threshold.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. VIZ 1 -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">5</div>
+      <h2>Price History — Time/Trend</h2>
+    </div>
+    <div class="two-col wide">
+      <img src="viz1_price_history.png" class="viz-img" alt="Price History">
+      <ul class="points">
+        <li><div class="dot"></div><div><strong>2 years</strong> of EUR/USD — clear trending phases visible.</div></li>
+        <li><div class="dot"></div><div>MA-20 and MA-50 <strong>crossovers</strong> align with directional moves — foundation of classic strategies.</div></li>
+        <li><div class="dot"></div><div>Volume plot shows <strong>activity spikes</strong> around major market events.</div></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 7. VIZ 2 -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">6</div>
+      <h2>Return Distribution — Distribution</h2>
+    </div>
+    <div class="two-col wide">
+      <img src="viz2_return_distribution.png" class="viz-img" alt="Return Distribution">
+      <ul class="points">
+        <li><div class="dot"></div><div>Returns are <strong>centered near zero</strong> — most hours see tiny moves.</div></li>
+        <li><div class="dot"></div><div><strong>Fat tails</strong> — large spikes happen more often than a normal distribution predicts.</div></li>
+        <li><div class="dot"></div><div>The model needs to be <strong>robust to rare extreme events</strong> — XGBoost handles this better than linear models.</div></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 8. VIZ 3 -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">7</div>
+      <h2>Volatility Patterns — Categorical</h2>
+    </div>
+    <div class="two-col wide">
+      <img src="viz3_volatility_patterns.png" class="viz-img" alt="Volatility Patterns" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex'">
+      <div style="display:none; align-items:center; justify-content:center; background:#1e2535; border-radius:12px; height:300px; color:#64748b; font-size:14px;">Re-run Cell 13 in the notebook to generate this chart</div>
+      <ul class="points">
+        <li><div class="dot"></div><div><strong>London/NY overlap</strong> (13:00-17:00 UTC) is the most volatile period — best trading window.</div></li>
+        <li><div class="dot"></div><div><strong>Wednesday & Thursday</strong> are the most active days.</div></li>
+        <li><div class="dot"></div><div>Hour of day and day of week should be <strong>added as model features</strong> — the market behaves very differently by session.</div></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 9. VIZ 4 -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">8</div>
+      <h2>Correlation Heatmap — Relationship</h2>
+    </div>
+    <div class="two-col wide">
+      <img src="viz4_correlation_heatmap.png" class="viz-img" alt="Correlation Heatmap">
+      <ul class="points">
+        <li><div class="dot"></div><div>MA-20, MA-50, EMA-20 are <strong>highly correlated</strong> — all track price closely.</div></li>
+        <li><div class="dot"></div><div>MACD and MACD_signal are correlated — prefer using <strong>MACD_hist</strong> to reduce redundancy.</div></li>
+        <li><div class="dot"></div><div>This is why I chose <strong>XGBoost over a linear model</strong> — tree-based models handle correlated features natively.</div></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 10. VIZ 5 -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">9</div>
+      <h2>Bollinger Bands + RSI — Additional</h2>
+    </div>
+    <div class="two-col wide">
+      <img src="viz5_bollinger_rsi.png" class="viz-img" alt="Bollinger Bands RSI">
+      <ul class="points">
+        <li><div class="dot"></div><div>Price touching the <strong>upper band + RSI above 70</strong> often precedes a pullback.</div></li>
+        <li><div class="dot"></div><div>Price at the <strong>lower band + RSI below 30</strong> often precedes a bounce.</div></li>
+        <li><div class="dot"></div><div>The ML model should learn these <strong>combined conditions</strong> better than simple rules.</div></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 11. VIZ 6+7 -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">10</div>
+      <h2>Label Distribution & RSI by Signal</h2>
+    </div>
+    <div class="two-col">
+      <div>
+        <img src="viz6_signal_distribution.png" class="viz-img" alt="Signal Distribution" style="max-height:220px; margin-bottom:12px;">
+        <p style="font-size:13px; color:#94a3b8;">If Hold dominates → use class weighting or SMOTE to balance.</p>
+      </div>
+      <div>
+        <img src="viz7_rsi_atr_by_signal.png" class="viz-img" alt="RSI ATR by Signal" style="max-height:220px; margin-bottom:12px;">
+        <p style="font-size:13px; color:#94a3b8;">Buy signals cluster at lower RSI, Sell at higher → RSI has predictive power.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 15. INSIGHTS -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">11</div>
+      <h2>Key Insights</h2>
+    </div>
+    <div class="chips">
+      <div class="chip">📉 Returns are near-zero with fat tails → use XGBoost, not linear models</div>
+      <div class="chip">🕐 London/NY overlap is most volatile → add session features</div>
+      <div class="chip">🔗 MA indicators are highly correlated → tree models handle this natively</div>
+      <div class="chip">⚖️ Labels may be imbalanced → use class weighting or SMOTE</div>
+      <div class="chip">📅 Wed/Thu most active → day of week is a useful feature</div>
+      <div class="chip">🎯 RSI clusters by signal → confirmed predictive power</div>
+      <div class="chip">🔴 BB + RSI combinations precede reversals → XGBoost can learn these interactions</div>
+    </div>
+  </div>
+
+  <!-- 16. NEXT -->
+  <div class="slide slide-content">
+    <div class="slide-header">
+      <div class="slide-num">12</div>
+      <h2>What's Next — Checkpoint 3</h2>
+    </div>
+    <div class="roadmap">
+      <div class="step done">
+        <span class="step-badge">✓ Done</span>
+        <div class="step-text"><h4>Checkpoint 2 — EDA</h4><p>Data collection, quality, feature engineering, 7 visualizations, insights</p></div>
+      </div>
+      <div class="step next">
+        <span class="step-badge">→ Next</span>
+        <div class="step-text"><h4>Checkpoint 3 — MVP (Week 8)</h4><p>Train XGBoost classifier · Compare against RSI rule-based baseline · Evaluate with F1-score · Address class imbalance</p></div>
+      </div>
+      <div class="step later">
+        <span class="step-badge">Later</span>
+        <div class="step-text"><h4>Checkpoint 4 — Prototype (Week 11)</h4><p>Streamlit dashboard + MT5 bot integration + live paper trading</p></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+  <button id="prev" onclick="changeSlide(-1)" disabled>←</button>
+  <span class="counter" id="counter">1 / 13</span>
+  <button id="next" onclick="changeSlide(1)">→</button>
+</div>
+<div class="hint">← → arrow keys to navigate</div>
+
+<script>
+  let current = 0;
+  const slides = document.querySelectorAll('.slide');
+  const total = slides.length;
+
+  function changeSlide(dir) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(total - 1, current + dir));
+    slides[current].classList.add('active');
+    document.getElementById('counter').textContent = `${current + 1} / ${total}`;
+    document.getElementById('prev').disabled = current === 0;
+    document.getElementById('next').disabled = current === total - 1;
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') changeSlide(1);
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   changeSlide(-1);
+  });
+</script>
+</body>
+</html>
