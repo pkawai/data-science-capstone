@@ -67,6 +67,104 @@ def _wait_for_candle_close() -> None:
     time.sleep(wait)
 
 
+# ── Open-position management ───────────────────────────────────────────────────
+
+def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None:
+    """
+    Called once per H1 bar for every open position.
+
+    1. Time-based exit  — close if position has been open >= MAX_BARS_IN_TRADE bars.
+    2. Breakeven        — move SL to entry once unrealized profit >= initial risk.
+    3. Trailing stop    — once in breakeven, trail SL by TRAIL_ATR_MULT × ATR.
+    """
+    now_utc      = datetime.now(timezone.utc)
+    open_tickets = {pos["ticket"] for pos in all_positions}
+
+    # Clean up state for positions that were closed by SL/TP
+    for stale in [t for t in list(trade_state) if t not in open_tickets]:
+        del trade_state[stale]
+
+    for pos in all_positions:
+        ticket     = pos["ticket"]
+        symbol_mt5 = pos["symbol"]
+        direction  = pos["type"]      # 2=Buy, 0=Sell
+        price_open = pos["price_open"]
+        current_sl = pos["sl"]
+        current_tp = pos["tp"]
+
+        # Reverse-lookup config symbol key from MT5 symbol name
+        symbol = next((k for k, v in config.PAIR_CONFIGS.items()
+                       if v["mt5_symbol"] == symbol_mt5), None)
+        if symbol is None:
+            continue
+
+        decimals = config.PAIR_CONFIGS[symbol]["decimals"]
+
+        # ── Time-based exit ──────────────────────────────────────────────────
+        time_open    = datetime.fromtimestamp(pos["time_open"], tz=timezone.utc)
+        bars_elapsed = (now_utc - time_open).total_seconds() / 3600
+
+        if bars_elapsed >= config.MAX_BARS_IN_TRADE:
+            logger.info(f"[{symbol}] Time exit: {bars_elapsed:.0f} bars open >= "
+                        f"{config.MAX_BARS_IN_TRADE}. Closing ticket {ticket}.")
+            mt5ex.close_position(ticket)
+            trade_state.pop(ticket, None)
+            continue
+
+        # ── Initialise state for newly detected positions ────────────────────
+        if ticket not in trade_state:
+            trade_state[ticket] = {
+                "initial_sl":       current_sl,
+                "breakeven_active": False,
+            }
+
+        ts           = trade_state[ticket]
+        initial_sl   = ts["initial_sl"]
+        initial_risk = abs(price_open - initial_sl)   # price units
+
+        # ── Fetch current ATR for this symbol ────────────────────────────────
+        try:
+            raw_df = mt5ex.get_latest_candles(symbol, n=50)
+            df     = build_features(raw_df)
+            atr    = df.iloc[-1]["ATR"]
+        except Exception as e:
+            logger.warning(f"[{symbol}] Could not get ATR for position management: {e}")
+            continue
+
+        ask, bid = mt5ex.get_current_price(symbol)
+
+        # Unrealized profit in price units (positive = winning)
+        if direction == 2:   # Buy
+            current_profit = bid - price_open
+        else:                # Sell
+            current_profit = price_open - ask
+
+        # ── Breakeven ────────────────────────────────────────────────────────
+        if not ts["breakeven_active"] and current_profit >= initial_risk:
+            be_sl = round(price_open, decimals)
+            if mt5ex.modify_position(ticket, sl=be_sl, tp=current_tp):
+                ts["breakeven_active"] = True
+                current_sl = be_sl
+                logger.info(f"[{symbol}] Breakeven: SL moved to entry {be_sl} "
+                            f"(ticket {ticket}).")
+
+        # ── Trailing stop ─────────────────────────────────────────────────────
+        if ts["breakeven_active"]:
+            trail_dist = config.TRAIL_ATR_MULT * atr
+            if direction == 2:   # Buy: trail SL up
+                trail_sl = round(bid - trail_dist, decimals)
+                if trail_sl > current_sl:
+                    if mt5ex.modify_position(ticket, sl=trail_sl, tp=current_tp):
+                        logger.info(f"[{symbol}] Trail SL → {trail_sl} (Buy, "
+                                    f"ticket {ticket}).")
+            else:                # Sell: trail SL down
+                trail_sl = round(ask + trail_dist, decimals)
+                if trail_sl < current_sl:
+                    if mt5ex.modify_position(ticket, sl=trail_sl, tp=current_tp):
+                        logger.info(f"[{symbol}] Trail SL → {trail_sl} (Sell, "
+                                    f"ticket {ticket}).")
+
+
 # ── Per-pair logic ─────────────────────────────────────────────────────────────
 
 def _process_pair(symbol: str, model, current_balance: float, utc_hour: int) -> None:
@@ -177,6 +275,7 @@ def run():
 
     account_balance = config.ACCOUNT_BALANCE
     daily_start_day = datetime.now(timezone.utc).date()
+    trade_state     = {}   # per-ticket state for trailing stop / breakeven
 
     try:
         while True:
@@ -198,6 +297,12 @@ def run():
 
             live_daily_pnl = current_balance - account_balance
             all_positions  = mt5ex.get_open_positions()
+
+            # ── Manage open positions (time exit + trailing stop) ─────────
+            try:
+                _manage_open_positions(all_positions, trade_state)
+            except Exception as e:
+                logger.error(f"Position management error: {e}")
 
             # ── Write state for dashboard ────────────────────────────────
             _write_state({

@@ -133,6 +133,7 @@ def get_open_positions(symbol: str = None) -> list[dict]:
             "sl":         p.sl,
             "tp":         p.tp,
             "profit":     p.profit,
+            "time_open":  p.time,   # Unix timestamp (seconds)
         }
         for p in positions
     ]
@@ -180,6 +181,29 @@ def close_position(ticket: int) -> bool:
         return False
 
     logger.info(f"Position {ticket} closed.")
+    return True
+
+
+def modify_position(ticket: int, sl: float, tp: float = None) -> bool:
+    """Modify SL (and optionally TP) of an open position."""
+    _require_mt5()
+    positions = mt5.positions_get(ticket=ticket)
+    if not positions:
+        logger.warning(f"modify_position: ticket {ticket} not found.")
+        return False
+    p = positions[0]
+    request = {
+        "action":   mt5.TRADE_ACTION_SLTP,
+        "position": ticket,
+        "sl":       sl,
+        "tp":       tp if tp is not None else p.tp,
+    }
+    result = mt5.order_send(request)
+    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+        code = result.retcode if result else "None"
+        logger.error(f"modify_position failed (retcode={code}): {mt5.last_error()}")
+        return False
+    logger.info(f"Position {ticket} modified: sl={sl}")
     return True
 
 

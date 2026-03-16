@@ -104,11 +104,13 @@ SLIPPAGE_PIPS = 0.5
 # ── Risk management ───────────────────────────────────────────────────────────
 ACCOUNT_BALANCE  = 10_000
 RISK_PER_TRADE   = 0.015
-SL_ATR_MULT      = 1.5
-TP_ATR_MULT      = 3.0
-MAX_OPEN_TRADES  = 1                # per pair
-DAILY_LOSS_LIMIT = 0.03
-LOT_SIZE         = 100_000
+SL_ATR_MULT       = 1.0             # matches TB_SL_MULT (training labels)
+TP_ATR_MULT       = 1.5             # matches TB_TP_MULT (training labels)
+MAX_OPEN_TRADES   = 1               # per pair
+DAILY_LOSS_LIMIT  = 0.03
+LOT_SIZE          = 100_000
+MAX_BARS_IN_TRADE = 20              # H1 bars before time-based exit (~20 hours)
+TRAIL_ATR_MULT    = 1.5             # ATR multiplier for trailing stop distance
 
 # ── MT5 connection ────────────────────────────────────────────────────────────
 MT5_LOGIN    = 0
