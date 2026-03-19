@@ -34,8 +34,9 @@ def walk_forward_backtest(raw_df: pd.DataFrame, symbol: str) -> dict:
     if not folds:
         raise ValueError("Not enough data for even one walk-forward fold.")
 
-    fold_results = []
-    all_trades   = []
+    fold_results     = []
+    all_trades       = []
+    all_meta_signals = []
 
     for i, (train_df, test_df) in enumerate(folds):
         feat_cols = get_feature_columns(train_df)
@@ -50,8 +51,12 @@ def walk_forward_backtest(raw_df: pd.DataFrame, symbol: str) -> dict:
         mask_vol     = test_df["Vol_ratio"] < config.VOL_RATIO_MAX
         active       = (mask_conf & mask_session & mask_adx & mask_vol).values
 
-        trades = _simulate_trades(test_df.reset_index(), y_pred, conf, active, symbol)
+        trades, fold_meta = _simulate_trades(
+            test_df.reset_index(), y_pred, conf, active, symbol,
+            probas=proba, feat_cols=feat_cols,
+        )
         all_trades.extend(trades)
+        all_meta_signals.extend(fold_meta)
 
         f1 = f1_score(test_df["Signal"], y_pred, average="macro", zero_division=0)
         win_rate, pf = _trade_metrics(trades)
@@ -75,10 +80,11 @@ def walk_forward_backtest(raw_df: pd.DataFrame, symbol: str) -> dict:
     equity_curve = _build_equity_curve(all_trades, config.ACCOUNT_BALANCE, symbol)
     summary      = _summarise(fold_results, equity_curve)
     return {
-        "fold_results": fold_results,
-        "equity_curve": equity_curve,
-        "all_trades":   all_trades,
-        "summary":      summary,
+        "fold_results":  fold_results,
+        "equity_curve":  equity_curve,
+        "all_trades":    all_trades,
+        "summary":       summary,
+        "meta_signals":  all_meta_signals,
     }
 
 
@@ -122,11 +128,14 @@ def print_summary(results: dict, symbol: str = "") -> None:
 
 # ── Trade simulation ───────────────────────────────────────────────────────────
 
-def _simulate_trades(test_df, predictions, confidences, active_mask, symbol):
-    trades     = []
-    in_trade   = False
-    entry_data = {}
-    cost       = _cost_per_trade(symbol)
+def _simulate_trades(test_df, predictions, confidences, active_mask, symbol,
+                     probas=None, feat_cols=None):
+    trades       = []
+    meta_signals = []
+    pending_meta = None
+    in_trade     = False
+    entry_data   = {}
+    cost         = _cost_per_trade(symbol)
 
     for i in range(len(test_df) - config.TB_HORIZON):
         row = test_df.iloc[i]
@@ -143,6 +152,11 @@ def _simulate_trades(test_df, predictions, confidences, active_mask, symbol):
                     "pnl":          pnl - cost / config.PAIR_CONFIGS[symbol]["pip_size"],
                     "close_reason": reason,
                 })
+                # Finalise meta-signal with trade outcome
+                if pending_meta is not None:
+                    pending_meta["outcome"] = 1 if reason == "TP" else 0
+                    meta_signals.append(pending_meta)
+                    pending_meta = None
                 in_trade = False
 
         if not in_trade and active_mask[i]:
@@ -163,8 +177,18 @@ def _simulate_trades(test_df, predictions, confidences, active_mask, symbol):
                     "breakeven":    False,
                     "start_idx":    i,
                 }
+                # Capture meta-signal entry (features + primary probabilities)
+                if probas is not None and feat_cols is not None:
+                    available   = [f for f in feat_cols if f in test_df.columns]
+                    feat_vals   = test_df.iloc[i][available].values.astype(float).copy()
+                    pending_meta = {
+                        "features":      feat_vals,
+                        "primary_proba": probas[i].copy(),
+                        "signal":        signal,
+                        "outcome":       None,   # filled on exit
+                    }
 
-    return trades
+    return trades, meta_signals
 
 
 def _check_exit(entry_data, test_df, current_idx, symbol):

@@ -112,6 +112,29 @@ LOT_SIZE          = 100_000
 MAX_BARS_IN_TRADE = 20              # H1 bars before time-based exit (~20 hours)
 TRAIL_ATR_MULT    = 1.5             # ATR multiplier for trailing stop distance
 
+# Portfolio risk scaling — Option A: dynamic sizing based on open trade count
+# [0 open trades, 1 open trade, 2+ open trades] → multiplier on RISK_PER_TRADE
+RISK_SCALE = [1.0, 0.5, 1/3]       # 1.5% / 0.75% / 0.5%
+
+# ── USD direction correlation map ────────────────────────────────────────────
+# Used to block contradictory positions across correlated pairs.
+# BUY EURUSD/GBPUSD = USD bearish; BUY USDJPY = USD bullish.
+USD_DIRECTION_MAP = {
+    "EURUSD": {"BUY": "USD_BEAR", "SELL": "USD_BULL"},
+    "GBPUSD": {"BUY": "USD_BEAR", "SELL": "USD_BULL"},
+    "USDJPY": {"BUY": "USD_BULL", "SELL": "USD_BEAR"},
+}
+
+# ── News blackout filter ──────────────────────────────────────────────────────
+NEWS_BLACKOUT_MINUTES = 60          # skip trading ±60 min around high-impact news
+
+# ── Meta-labeling ─────────────────────────────────────────────────────────────
+META_CONFIDENCE_THRESHOLD = 0.55    # meta-model minimum win probability to trade
+
+# ── Optuna hyperparameter search ──────────────────────────────────────────────
+USE_OPTUNA    = True
+OPTUNA_TRIALS = 50                  # number of search trials (higher = better but slower)
+
 # ── MT5 connection ────────────────────────────────────────────────────────────
 MT5_LOGIN    = 0
 MT5_PASSWORD = ""

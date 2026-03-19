@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 
 import config
+import news_calendar
 from features      import build_features, get_feature_columns
 from model         import load, predict_signal
 from risk_manager  import calculate_position_size, calculate_sl_tp, check_daily_limit
@@ -165,11 +166,46 @@ def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None
                                     f"ticket {ticket}).")
 
 
+# ── USD direction filter ────────────────────────────────────────────────────────
+
+def _get_usd_direction(positions: list[dict]) -> str | None:
+    """
+    Derive the consensus USD direction from all open positions.
+    Returns 'USD_BULL', 'USD_BEAR', or None (no positions / tied).
+    """
+    directions = []
+    for pos in positions:
+        symbol_mt5 = pos["symbol"]
+        symbol     = next((k for k, v in config.PAIR_CONFIGS.items()
+                           if v["mt5_symbol"] == symbol_mt5), None)
+        if symbol not in config.USD_DIRECTION_MAP:
+            continue
+        trade_dir = "BUY" if pos["type"] == 2 else "SELL"
+        directions.append(config.USD_DIRECTION_MAP[symbol][trade_dir])
+
+    if not directions:
+        return None
+    bulls = directions.count("USD_BULL")
+    bears = directions.count("USD_BEAR")
+    if bulls > bears:
+        return "USD_BULL"
+    if bears > bulls:
+        return "USD_BEAR"
+    return None   # tied — no clear consensus
+
+
 # ── Per-pair logic ─────────────────────────────────────────────────────────────
 
-def _process_pair(symbol: str, model, current_balance: float, utc_hour: int) -> None:
+def _process_pair(symbol: str, model, current_balance: float,
+                  utc_hour: int, all_positions: list[dict]) -> None:
     """Run one full cycle for a single pair."""
     label_map = {0: "SELL", 1: "HOLD", 2: "BUY"}
+
+    # ── News blackout filter ───────────────────────────────────────────────
+    now_utc = datetime.now(timezone.utc)
+    if news_calendar.is_news_blackout(now_utc, config.NEWS_BLACKOUT_MINUTES):
+        logger.info(f"[{symbol}] News blackout — skipping.")
+        return
 
     # ── Check if already in trade for this pair ────────────────────────────
     open_positions = mt5ex.get_open_positions(symbol)
@@ -211,15 +247,29 @@ def _process_pair(symbol: str, model, current_balance: float, utc_hour: int) -> 
     if signal == 1:
         return   # Hold
 
-    # ── Calculate SL / TP / lots ────────────────────────────────────────────
+    # ── USD direction filter ───────────────────────────────────────────────
+    usd_consensus = _get_usd_direction(all_positions)
+    if usd_consensus is not None and symbol in config.USD_DIRECTION_MAP:
+        trade_dir    = "BUY" if signal == 2 else "SELL"
+        signal_usd   = config.USD_DIRECTION_MAP[symbol][trade_dir]
+        if signal_usd != usd_consensus:
+            logger.info(f"[{symbol}] USD conflict: existing={usd_consensus}, "
+                        f"new signal={signal_usd}. Skipping.")
+            return
+
+    # ── Calculate SL / TP / lots (with portfolio risk cap) ─────────────────
     atr      = last_row["ATR"]
     ask, bid = mt5ex.get_current_price(symbol)
     entry    = ask if signal == 2 else bid
     sl, tp   = calculate_sl_tp(entry, signal, atr, symbol)
-    lots     = calculate_position_size(current_balance, atr, symbol)
+    lots     = calculate_position_size(current_balance, atr, symbol,
+                                       open_trade_count=len(all_positions))
 
+    scale_idx = min(len(all_positions), len(config.RISK_SCALE) - 1)
+    risk_pct  = config.RISK_PER_TRADE * config.RISK_SCALE[scale_idx] * 100
     logger.info(f"[{symbol}] Placing {label_map[signal]}  "
-                f"entry={entry}  sl={sl}  tp={tp}  lots={lots}")
+                f"entry={entry}  sl={sl}  tp={tp}  lots={lots}  "
+                f"risk={risk_pct:.2f}% ({len(all_positions)} trades open)")
 
     # ── Execute ────────────────────────────────────────────────────────────
     try:
@@ -328,7 +378,8 @@ def run():
             # ── Process each pair ────────────────────────────────────────
             for symbol, model in models.items():
                 try:
-                    _process_pair(symbol, model, current_balance, utc_hour)
+                    _process_pair(symbol, model, current_balance,
+                                  utc_hour, all_positions)
                 except Exception as e:
                     logger.error(f"[{symbol}] Unexpected error: {e}")
 

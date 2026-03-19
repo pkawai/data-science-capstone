@@ -14,9 +14,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = _add_core_indicators(df)
     df = _add_adx(df)
     df = _add_h4_trend(df)
+    df = _add_d1_trend(df)
     df = _add_vol_ratio(df)
     df = _add_lagged_features(df)
     df = _add_session_feature(df)
+    df = _add_time_features(df)
     df = _add_normalized_distance(df)
     df = _add_candle_features(df)
     df = _add_rsi_slope(df)
@@ -224,4 +226,37 @@ def _add_candle_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def _add_rsi_slope(df: pd.DataFrame) -> pd.DataFrame:
     df["RSI_slope"] = df["RSI"] - df["RSI"].shift(3)
+    return df
+
+
+def _add_d1_trend(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Daily (D1) 200-EMA trend — the most-watched institutional reference.
+    D1_trend   : 1 if price > D1 EMA200 (bullish), 0 if bearish.
+    D1_EMA200_dist : (close - D1 EMA200) / ATR — normalised distance.
+    Forward-filled back to H1 to avoid look-ahead bias.
+    """
+    d1_close  = df["Close"].resample("1D").last()
+    d1_ema200 = d1_close.ewm(span=200, adjust=False).mean()
+    d1_trend  = (d1_close > d1_ema200).astype(float)
+    d1_dist   = d1_close - d1_ema200
+
+    df["D1_trend"]       = d1_trend.reindex(df.index, method="ffill")
+    d1_dist_h1           = d1_dist.reindex(df.index, method="ffill")
+    df["D1_EMA200_dist"] = d1_dist_h1 / df["ATR"].replace(0, np.nan)
+    return df
+
+
+def _add_time_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cyclical hour encoding + day-of-week flags.
+    These let the model learn time-of-day and day-of-week patterns.
+    """
+    hour = df.index.hour
+    dow  = df.index.dayofweek          # 0=Monday … 4=Friday
+    df["Hour_sin"]    = np.sin(2 * np.pi * hour / 24)
+    df["Hour_cos"]    = np.cos(2 * np.pi * hour / 24)
+    df["Day_of_week"] = dow.astype(float)
+    df["Is_monday"]   = (dow == 0).astype(float)
+    df["Is_friday"]   = (dow == 4).astype(float)
     return df

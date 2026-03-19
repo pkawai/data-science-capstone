@@ -8,23 +8,27 @@ def calculate_position_size(
     atr: float,
     symbol: str,
     sl_multiplier: float = config.SL_ATR_MULT,
+    open_trade_count: int = 0,
 ) -> float:
     """
-    Risk-based position sizing, pair-aware.
+    Risk-based position sizing with dynamic scaling (Option A portfolio cap).
 
-    Risk $   = account_balance × RISK_PER_TRADE
+    open_trade_count controls how much of RISK_PER_TRADE is used:
+      0 open trades → 100% risk  (1.5%)
+      1 open trade  →  50% risk  (0.75%)
+      2+ open trades→  33% risk  (0.5%)
+
+    Risk $   = account_balance × RISK_PER_TRADE × scale
     SL pips  = sl_multiplier × ATR / pip_size
     Lots     = Risk $ / (SL pips × pip_value_per_lot)
-
-    pip_value_per_lot = LOT_SIZE × pip_size
-    For USD-quoted pairs (EURUSD, GBPUSD, AUDUSD): ~$10/pip standard lot
-    For JPY pairs (USDJPY): pip_size=0.01, pip_value ≈ $9 (approx)
     """
-    pip_size       = config.PAIR_CONFIGS[symbol]["pip_size"]
-    pip_value_usd  = config.PAIR_CONFIGS[symbol]["pip_value_usd"]
-    risk_usd       = account_balance * config.RISK_PER_TRADE
-    sl_pips        = (sl_multiplier * atr) / pip_size
-    lots           = risk_usd / (sl_pips * pip_value_usd)
+    pip_size      = config.PAIR_CONFIGS[symbol]["pip_size"]
+    pip_value_usd = config.PAIR_CONFIGS[symbol]["pip_value_usd"]
+    scale_idx     = min(open_trade_count, len(config.RISK_SCALE) - 1)
+    scale         = config.RISK_SCALE[scale_idx]
+    risk_usd      = account_balance * config.RISK_PER_TRADE * scale
+    sl_pips       = (sl_multiplier * atr) / pip_size
+    lots          = risk_usd / (sl_pips * pip_value_usd)
     return round(max(lots, 0.01), 2)
 
 
