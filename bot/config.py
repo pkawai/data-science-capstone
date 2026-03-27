@@ -102,7 +102,7 @@ STEP_MONTHS   = 3
 SLIPPAGE_PIPS = 0.5
 
 # ── Risk management ───────────────────────────────────────────────────────────
-ACCOUNT_BALANCE  = 10_000
+ACCOUNT_BALANCE  = 5_000
 RISK_PER_TRADE   = 0.015
 SL_ATR_MULT       = 1.0             # matches TB_SL_MULT (training labels)
 TP_ATR_MULT       = 1.5             # matches TB_TP_MULT (training labels)
