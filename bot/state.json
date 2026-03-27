@@ -1,0 +1,26 @@
+{
+  "bot_running": true,
+  "balance": 5205.45,
+  "daily_pnl": 2.3,
+  "in_trade": true,
+  "open_positions": [
+    {
+      "symbol": "USDJPY",
+      "type": 2,
+      "price_open": 150.419,
+      "price_current": 150.344,
+      "sl": 150.284,
+      "tp": 150.622,
+      "profit": -5.04,
+      "volume": 0.1,
+      "ticket": 200000
+    }
+  ],
+  "pairs_trading": [
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY"
+  ],
+  "last_signal": "BUY USDJPY",
+  "last_updated": "2026-03-23 04:58 UTC"
+}
