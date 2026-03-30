@@ -91,7 +91,7 @@ XGBOOST_PARAMS = {
     "random_state":     42,
     "n_jobs":           -1,
 }
-CONFIDENCE_THRESHOLD = 0.65
+CONFIDENCE_THRESHOLD = 0.60
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
 TRAIN_MONTHS  = 15
@@ -126,10 +126,10 @@ USD_DIRECTION_MAP = {
 }
 
 # ── News blackout filter ──────────────────────────────────────────────────────
-NEWS_BLACKOUT_MINUTES = 60          # skip trading ±60 min around high-impact news
+NEWS_BLACKOUT_MINUTES = 30          # skip trading ±30 min around high-impact news
 
 # ── Meta-labeling ─────────────────────────────────────────────────────────────
-META_CONFIDENCE_THRESHOLD = 0.55    # meta-model minimum win probability to trade
+META_CONFIDENCE_THRESHOLD = 0.50    # meta-model minimum win probability to trade
 
 # ── Optuna hyperparameter search ──────────────────────────────────────────────
 USE_OPTUNA    = True
