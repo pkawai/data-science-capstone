@@ -25,12 +25,15 @@ def connect() -> bool:
         raise EnvironmentError("MetaTrader5 package is not installed.")
     if not mt5.initialize():
         raise ConnectionError(f"MT5 initialize() failed: {mt5.last_error()}")
-    authorized = mt5.login(config.MT5_LOGIN,
-                           password=config.MT5_PASSWORD,
-                           server=config.MT5_SERVER)
-    if not authorized:
-        mt5.shutdown()
-        raise ConnectionError(f"MT5 login failed: {mt5.last_error()}")
+    # Only call login() if credentials are configured; otherwise rely on
+    # the already-logged-in MT5 terminal.
+    if config.MT5_LOGIN and config.MT5_PASSWORD:
+        authorized = mt5.login(config.MT5_LOGIN,
+                               password=config.MT5_PASSWORD,
+                               server=config.MT5_SERVER)
+        if not authorized:
+            mt5.shutdown()
+            raise ConnectionError(f"MT5 login failed: {mt5.last_error()}")
     info = mt5.account_info()
     logger.info(f"Connected to MT5: {info.name} | Balance: {info.balance} {info.currency}")
     return True
