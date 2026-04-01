@@ -51,12 +51,12 @@ def _fetch_yfinance(symbol: str, years: int) -> pd.DataFrame:
     yf_ticker  = pair_cfg["yf_symbol"]
 
     ticker = yf.Ticker(yf_ticker)
-    df = ticker.history(period="730d", interval=config.TIMEFRAME, auto_adjust=True)
+    df = ticker.history(period=f"{years * 365}d", interval=config.TIMEFRAME, auto_adjust=True)
 
     if df.empty:
         # Fallback: try without =X suffix
         ticker = yf.Ticker(yf_ticker.replace("=X", ""))
-        df = ticker.history(period="730d", interval=config.TIMEFRAME, auto_adjust=True)
+        df = ticker.history(period=f"{years * 365}d", interval=config.TIMEFRAME, auto_adjust=True)
 
     if df.empty:
         raise RuntimeError(f"yfinance returned no data for {yf_ticker}. "

@@ -265,6 +265,10 @@ def _process_pair(symbol: str, model, current_balance: float,
     lots     = calculate_position_size(current_balance, atr, symbol,
                                        open_trade_count=len(all_positions))
 
+    if lots == 0.0:
+        logger.info(f"[{symbol}] Calculated lots below minimum (0.01). Skipping trade.")
+        return
+
     scale_idx = min(len(all_positions), len(config.RISK_SCALE) - 1)
     risk_pct  = config.RISK_PER_TRADE * config.RISK_SCALE[scale_idx] * 100
     logger.info(f"[{symbol}] Placing {label_map[signal]}  "
@@ -337,7 +341,8 @@ def run():
 
             if today != daily_start_day:
                 daily_start_day = today
-                logger.info("New trading day.")
+                account_balance = current_balance
+                logger.info(f"New trading day. Start-of-day balance: {account_balance:.2f}")
 
             # ── Get current state ────────────────────────────────────────
             try:

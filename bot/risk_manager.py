@@ -29,7 +29,9 @@ def calculate_position_size(
     risk_usd      = account_balance * config.RISK_PER_TRADE * scale
     sl_pips       = (sl_multiplier * atr) / pip_size
     lots          = risk_usd / (sl_pips * pip_value_usd)
-    return round(max(lots, 0.01), 2)
+    if lots < 0.01:
+        return 0.0
+    return round(lots, 2)
 
 
 def calculate_sl_tp(
