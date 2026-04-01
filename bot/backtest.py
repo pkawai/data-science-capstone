@@ -283,9 +283,10 @@ def _summarise(fold_results, equity_curve):
     avg_wr  = np.mean([r["win_rate"]      for r in fold_results])
     avg_pf  = np.mean([r["profit_factor"] for r in fold_results])
     avg_f1  = np.mean([r["f1_macro"]      for r in fold_results])
-    eq      = equity_curve
-    daily   = eq.pct_change().dropna()
-    sharpe  = (daily.mean() / daily.std() * np.sqrt(252)) if daily.std() > 0 else 0.0
+    eq       = equity_curve
+    daily_eq = eq.resample("1D").last().ffill()
+    daily    = daily_eq.pct_change().dropna()
+    sharpe   = (daily.mean() / daily.std() * np.sqrt(252)) if daily.std() > 0 else 0.0
     max_dd  = ((eq - eq.cummax()) / eq.cummax()).min()
     return {
         "total_trades":      total_trades,

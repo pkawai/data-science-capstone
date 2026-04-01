@@ -47,7 +47,7 @@ def _train_xgb(X, y, params: dict = None) -> XGBClassifier:
     p  = {k: v for k, v in (params or config.XGBOOST_PARAMS).items()
           if k != "use_label_encoder"}
     model = XGBClassifier(**p, num_class=N_CLASSES, objective="multi:softprob")
-    model.fit(X, y, sample_weight=sw, eval_set=[(X, y)], verbose=False)
+    model.fit(X, y, sample_weight=sw, verbose=False)
     return model
 
 

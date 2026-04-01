@@ -50,13 +50,11 @@ def _optimize_hyperparams(df, feat_cols: list[str]) -> dict:
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     from sklearn.metrics import f1_score as sk_f1
+    from sklearn.model_selection import TimeSeriesSplit
 
-    n      = len(df)
-    split  = int(n * 0.70)
-    X_tr   = df.iloc[:split][feat_cols]
-    y_tr   = df.iloc[:split]["Signal"]
-    X_val  = df.iloc[split:][feat_cols]
-    y_val  = df.iloc[split:]["Signal"]
+    X_all = df[feat_cols]
+    y_all = df["Signal"]
+    tscv  = TimeSeriesSplit(n_splits=3)
 
     def objective(trial):
         params = {
@@ -67,9 +65,14 @@ def _optimize_hyperparams(df, feat_cols: list[str]) -> dict:
             "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
             "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
         }
-        model  = _train_xgb(X_tr, y_tr, params=params)
-        y_pred = model.predict_proba(X_val).argmax(axis=1)
-        return sk_f1(y_val, y_pred, average="macro", zero_division=0)
+        scores = []
+        for train_idx, val_idx in tscv.split(X_all):
+            X_tr, y_tr = X_all.iloc[train_idx], y_all.iloc[train_idx]
+            X_val, y_val = X_all.iloc[val_idx], y_all.iloc[val_idx]
+            model  = _train_xgb(X_tr, y_tr, params=params)
+            y_pred = model.predict_proba(X_val).argmax(axis=1)
+            scores.append(sk_f1(y_val, y_pred, average="macro", zero_division=0))
+        return float(np.mean(scores))
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=config.OPTUNA_TRIALS, show_progress_bar=True)
