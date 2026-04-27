@@ -19,7 +19,7 @@ st.set_page_config(
     page_title="EUR/USD Bot Monitor",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 import config
@@ -117,7 +117,67 @@ def build_equity_curve(trades: pd.DataFrame, start_balance: float = 10_000) -> p
 
 # ── Main dashboard ─────────────────────────────────────────────────────────────
 
+def render_sidebar():
+    with st.sidebar:
+        st.markdown("## 📋 How It Works")
+        st.markdown("""
+**Pipeline:**
+1. **Data** — MT5 H1 candles (EUR/USD, GBP/USD, USD/JPY)
+2. **Features** — 30+ indicators (RSI, MACD, BB, ATR, ADX, MA, lagged)
+3. **Labels** — Triple Barrier (TP/SL/time horizon)
+4. **Model** — XGBoost + LightGBM + RandomForest ensemble
+5. **Meta-model** — Binary classifier filters out low-quality signals
+6. **Validation** — Walk-forward (15mo train / 3mo test)
+7. **Execution** — ATR-based SL/TP, dynamic position sizing
+        """)
+
+        st.divider()
+
+        st.markdown("## 🔄 Recent Updates")
+        st.markdown("""
+**Latest changes (Mar 2026):**
+- 🎯 Relaxed live filters to allow more trades:
+  - Confidence: 0.65 → 0.60
+  - Meta threshold: 0.55 → 0.50
+  - News blackout: ±60 → ±30 min
+- 🔧 Fixed MT5 connection (works with already-logged-in terminal)
+- 💰 Adjusted starting balance to $5,000 (matches demo account)
+- 📊 Added demo data generator for Mac presentations
+
+**Earlier upgrades:**
+- ✨ Ensemble model (XGBoost + LightGBM + RF)
+- 🧠 Meta-labeling for signal quality
+- 📰 News blackout filter
+- 💵 USD direction correlation filter
+- ⚖️ Dynamic risk scaling per portfolio
+        """)
+
+        st.divider()
+
+        st.markdown("## 🛠️ Tech Stack")
+        st.markdown("""
+- **Python** (pandas, numpy, scikit-learn)
+- **ML:** XGBoost, LightGBM, RandomForest
+- **Tuning:** Optuna
+- **Broker:** MetaTrader 5 (MT5)
+- **Dashboard:** Streamlit + Plotly
+- **Source:** [GitHub](https://github.com/pkawai/data-science-capstone)
+        """)
+
+        st.divider()
+
+        st.markdown("## ⚠️ Known Limitations")
+        st.markdown("""
+- Trend-following model — idle in ranging markets (last ~3 weeks)
+- MT5 is Windows-only (Mac uses demo data)
+- $5K demo limits position sizing
+- Trained on H1 only — won't generalize to other timeframes
+        """)
+
+
 def main():
+    render_sidebar()
+
     state  = load_state()
     trades = load_trades()
     START_BALANCE = config.ACCOUNT_BALANCE
