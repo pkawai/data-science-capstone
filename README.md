@@ -8,20 +8,20 @@ An end-to-end machine learning system that predicts forex trade signals (Buy / S
 
 ## Live Demo
 
-🔗 **Dashboard:** [https://YOUR-STREAMLIT-URL.streamlit.app](https://YOUR-STREAMLIT-URL.streamlit.app) _(deploy URL — update after going live)_
+🔗 **Dashboard:** [https://YOUR-STREAMLIT-URL.streamlit.app](https://YOUR-STREAMLIT-URL.streamlit.app) _(deploy URL — see [DEPLOY.md](DEPLOY.md))_
 
 🔗 **GitHub Repository:** [https://github.com/pkawai/data-science-capstone](https://github.com/pkawai/data-science-capstone)
 
 ## Screenshots
 
-### Live Monitoring Dashboard
-![Dashboard Monitor](bot/equity_curve_EURUSD.png)
-
 ### Backtest — EUR/USD Equity Curve
 ![EURUSD Backtest](bot/equity_curve_EURUSD.png)
 
-### Feature Importance
+### Feature Importance (EUR/USD)
 ![Feature Importance](bot/feature_importance_EURUSD.png)
+
+### Live Dashboard
+_Add screenshots after deployment — see [DEPLOY.md](DEPLOY.md) for instructions._
 
 ## Features
 

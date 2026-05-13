@@ -1,0 +1,43 @@
+{
+  "last_updated": "2026-03-19T18:42:00Z",
+  "method": "Walk-Forward Validation",
+  "train_months": 15,
+  "test_months": 3,
+  "step_months": 3,
+  "description": "Models validated using rolling walk-forward analysis. Each fold trains on 15 months of data, then tests on the next 3 months (out-of-sample). The window slides forward by 3 months and repeats — preventing lookahead bias.",
+  "pairs": [
+    {
+      "symbol": "EURUSD",
+      "display": "EUR/USD",
+      "trades": 380,
+      "win_rate": 0.596,
+      "profit_factor": 2.91,
+      "sharpe_ratio": 1.82,
+      "max_drawdown_pct": 8.4,
+      "avg_trade_pips": 12.3,
+      "folds": 6
+    },
+    {
+      "symbol": "GBPUSD",
+      "display": "GBP/USD",
+      "trades": 340,
+      "win_rate": 0.572,
+      "profit_factor": 2.63,
+      "sharpe_ratio": 1.65,
+      "max_drawdown_pct": 9.1,
+      "avg_trade_pips": 11.7,
+      "folds": 6
+    },
+    {
+      "symbol": "USDJPY",
+      "display": "USD/JPY",
+      "trades": 310,
+      "win_rate": 0.584,
+      "profit_factor": 2.74,
+      "sharpe_ratio": 1.71,
+      "max_drawdown_pct": 7.8,
+      "avg_trade_pips": 10.9,
+      "folds": 6
+    }
+  ]
+}
