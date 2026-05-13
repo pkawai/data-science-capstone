@@ -10,3 +10,12 @@
 __pycache__/
 *.pyc
 venv/
+
+# Environment / secrets
+.env
+.env.local
+*.key
+
+# Logs
+*.log
+trades.log
