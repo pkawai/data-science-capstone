@@ -46,23 +46,48 @@ st.markdown(
 
 # ── Data loaders ───────────────────────────────────────────────────────────────
 
+def _empty_state() -> dict:
+    return {
+        "bot_running":    False,
+        "balance":        config.ACCOUNT_BALANCE,
+        "daily_pnl":      0,
+        "in_trade":       False,
+        "open_position":  None,
+        "last_signal":    "N/A",
+        "last_updated":   "N/A",
+        "open_positions": [],
+    }
+
+
+def _empty_trades() -> pd.DataFrame:
+    return pd.DataFrame(columns=[
+        "time", "direction", "entry", "sl", "tp",
+        "lots", "ticket", "confidence", "adx", "atr",
+    ])
+
+
 def load_state() -> dict:
     if not os.path.exists(STATE_JSON):
-        return {"bot_running": False, "balance": 10000, "daily_pnl": 0,
-                "in_trade": False, "open_position": None,
-                "last_signal": "N/A", "last_updated": "N/A"}
-    with open(STATE_JSON) as f:
-        return json.load(f)
+        return _empty_state()
+    try:
+        with open(STATE_JSON) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        st.warning(f"Could not read {STATE_JSON}: {e}. Showing defaults.")
+        return _empty_state()
 
 
 def load_trades() -> pd.DataFrame:
     if not os.path.exists(TRADES_CSV):
-        return pd.DataFrame(columns=[
-            "time", "direction", "entry", "sl", "tp",
-            "lots", "ticket", "confidence", "adx", "atr",
-        ])
-    df = pd.read_csv(TRADES_CSV, parse_dates=["time"])
-    return df.sort_values("time", ascending=False).reset_index(drop=True)
+        return _empty_trades()
+    try:
+        df = pd.read_csv(TRADES_CSV, parse_dates=["time"])
+        if df.empty:
+            return _empty_trades()
+        return df.sort_values("time", ascending=False).reset_index(drop=True)
+    except (pd.errors.EmptyDataError, pd.errors.ParserError, OSError, ValueError) as e:
+        st.warning(f"Could not parse {TRADES_CSV}: {e}. Showing empty trade list.")
+        return _empty_trades()
 
 
 def compute_metrics(trades: pd.DataFrame, start_balance: float = 10_000) -> dict:
@@ -183,50 +208,86 @@ def render_sidebar():
         """)
 
 
+BACKTEST_JSON = "backtest_results.json"
+
+
+def load_backtest_results() -> dict | None:
+    """Load saved walk-forward backtest results. Returns None if missing/invalid."""
+    if not os.path.exists(BACKTEST_JSON):
+        return None
+    try:
+        with open(BACKTEST_JSON) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        st.warning(f"Could not read {BACKTEST_JSON}: {e}")
+        return None
+
+
 def render_backtest_tab():
     st.header("📊 Walk-Forward Backtest Results")
-    st.markdown("""
-    Each model was validated using **walk-forward analysis** — train on 15 months,
-    test on the following 3 months, then slide forward. This prevents lookahead bias
-    and simulates how the bot performs on unseen future data.
-    """)
+
+    results = load_backtest_results()
+
+    if results is None:
+        st.info(
+            "No saved backtest results found. Run `python train.py` on Windows to "
+            "generate `backtest_results.json` with real walk-forward metrics."
+        )
+        return
+
+    st.markdown(results.get("description", ""))
+    st.caption(
+        f"Method: {results.get('method', 'N/A')}  |  "
+        f"Train: {results.get('train_months', '?')} mo  |  "
+        f"Test: {results.get('test_months', '?')} mo  |  "
+        f"Step: {results.get('step_months', '?')} mo  |  "
+        f"Last updated: {results.get('last_updated', 'N/A')}"
+    )
 
     st.divider()
 
-    backtest_summary = pd.DataFrame({
-        "Pair":            ["EUR/USD", "GBP/USD", "USD/JPY"],
-        "Trades":          [380, 340, 310],
-        "Win Rate":        ["59.6%", "57.2%", "58.4%"],
-        "Profit Factor":   [2.91, 2.63, 2.74],
-        "Sharpe Ratio":    [1.82, 1.65, 1.71],
-    })
+    pairs_data = results.get("pairs", [])
+    if not pairs_data:
+        st.warning("No pair results in backtest_results.json")
+        return
+
+    summary_df = pd.DataFrame([
+        {
+            "Pair":             p["display"],
+            "Trades":           p["trades"],
+            "Win Rate":         f"{p['win_rate']:.1%}",
+            "Profit Factor":    f"{p['profit_factor']:.2f}",
+            "Sharpe Ratio":     f"{p['sharpe_ratio']:.2f}",
+            "Max Drawdown":     f"{p['max_drawdown_pct']:.1f}%",
+            "Avg Trade (pips)": f"{p['avg_trade_pips']:.1f}",
+        }
+        for p in pairs_data
+    ])
 
     st.subheader("Performance Summary")
-    st.dataframe(backtest_summary, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
     st.divider()
 
     st.subheader("Equity Curves")
-    pairs = [("EURUSD", "EUR/USD"), ("GBPUSD", "GBP/USD"), ("USDJPY", "USD/JPY")]
-
-    for symbol, display in pairs:
+    for p in pairs_data:
+        symbol, display = p["symbol"], p["display"]
         st.markdown(f"#### {display}")
         eq_path = f"equity_curve_{symbol}.png"
         if os.path.exists(eq_path):
             st.image(eq_path, use_container_width=True)
         else:
-            st.warning(f"Equity curve image not found: {eq_path}")
+            st.caption(f"_(Equity curve image not found: {eq_path})_")
 
     st.divider()
 
     st.subheader("Feature Importance")
     st.markdown("Top features driving model decisions for each pair.")
-
-    cols = st.columns(3)
-    for i, (symbol, display) in enumerate(pairs):
+    cols = st.columns(len(pairs_data))
+    for i, p in enumerate(pairs_data):
         with cols[i]:
-            st.markdown(f"**{display}**")
-            fi_path = f"feature_importance_{symbol}.png"
+            st.markdown(f"**{p['display']}**")
+            fi_path = f"feature_importance_{p['symbol']}.png"
             if os.path.exists(fi_path):
                 st.image(fi_path, use_container_width=True)
             else:
