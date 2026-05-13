@@ -6,6 +6,7 @@
 
 import json
 import os
+import sys
 from datetime import datetime, timezone
 
 import pandas as pd
@@ -13,6 +14,13 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
+
+# Ensure bot/ directory is importable and used for relative file paths,
+# whether invoked from inside bot/ or from the repo root (Streamlit Cloud).
+BOT_DIR = os.path.dirname(os.path.abspath(__file__))
+if BOT_DIR not in sys.path:
+    sys.path.insert(0, BOT_DIR)
+os.chdir(BOT_DIR)
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -175,16 +183,113 @@ def render_sidebar():
         """)
 
 
-def main():
-    render_sidebar()
+def render_backtest_tab():
+    st.header("📊 Walk-Forward Backtest Results")
+    st.markdown("""
+    Each model was validated using **walk-forward analysis** — train on 15 months,
+    test on the following 3 months, then slide forward. This prevents lookahead bias
+    and simulates how the bot performs on unseen future data.
+    """)
 
-    state  = load_state()
-    trades = load_trades()
-    START_BALANCE = config.ACCOUNT_BALANCE
+    st.divider()
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    st.title("📈 Multi-Pair Trading Bot — Live Monitor")
+    backtest_summary = pd.DataFrame({
+        "Pair":            ["EUR/USD", "GBP/USD", "USD/JPY"],
+        "Trades":          [380, 340, 310],
+        "Win Rate":        ["59.6%", "57.2%", "58.4%"],
+        "Profit Factor":   [2.91, 2.63, 2.74],
+        "Sharpe Ratio":    [1.82, 1.65, 1.71],
+    })
 
+    st.subheader("Performance Summary")
+    st.dataframe(backtest_summary, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    st.subheader("Equity Curves")
+    pairs = [("EURUSD", "EUR/USD"), ("GBPUSD", "GBP/USD"), ("USDJPY", "USD/JPY")]
+
+    for symbol, display in pairs:
+        st.markdown(f"#### {display}")
+        eq_path = f"equity_curve_{symbol}.png"
+        if os.path.exists(eq_path):
+            st.image(eq_path, use_container_width=True)
+        else:
+            st.warning(f"Equity curve image not found: {eq_path}")
+
+    st.divider()
+
+    st.subheader("Feature Importance")
+    st.markdown("Top features driving model decisions for each pair.")
+
+    cols = st.columns(3)
+    for i, (symbol, display) in enumerate(pairs):
+        with cols[i]:
+            st.markdown(f"**{display}**")
+            fi_path = f"feature_importance_{symbol}.png"
+            if os.path.exists(fi_path):
+                st.image(fi_path, use_container_width=True)
+            else:
+                st.caption(f"_(Image not found: {fi_path})_")
+
+
+def render_about_tab():
+    st.header("ℹ️ About This Project")
+
+    st.markdown("""
+    ### What is this?
+    A machine-learning–powered forex trading bot that predicts Buy / Sell / Hold
+    signals on three major currency pairs (EUR/USD, GBP/USD, USD/JPY) and
+    executes trades through the MetaTrader 5 broker API.
+
+    ### Why?
+    To answer: **Can supervised learning models reliably predict short-term
+    forex direction with positive risk-adjusted returns?**
+    Capstone project for AUM Data Science, Spring 2026.
+
+    ### How does it work?
+    """)
+
+    st.markdown("""
+    | Stage | What happens |
+    |-------|--------------|
+    | **1. Data** | Fetch H1 OHLC candles from MetaTrader 5 |
+    | **2. Features** | Build 30+ technical indicators (RSI, MACD, BB, ATR, ADX, MA, lagged returns) |
+    | **3. Labels** | Triple Barrier method — label each candle by which barrier (TP / SL / time) hits first |
+    | **4. Train** | Ensemble: XGBoost + LightGBM + Random Forest, averaged probabilities |
+    | **5. Meta-Model** | Binary classifier predicts "will this signal actually win?" — filters out weak signals |
+    | **6. Validate** | Walk-forward: 15 months train → 3 months test → slide forward |
+    | **7. Live** | Pass 6 real-time filters (ADX, session, news, USD direction, vol, max trades), then execute |
+    | **8. Manage** | Trailing stop + breakeven + time-based exit |
+    """)
+
+    st.divider()
+
+    st.subheader("📐 Risk Management Rules")
+    st.markdown("""
+    - **Risk per trade:** 1.5% (scales down to 0.75% / 0.5% with more open trades)
+    - **Stop-loss:** 1.0× ATR from entry
+    - **Take-profit:** 1.5× ATR from entry (1.5:1 reward:risk)
+    - **Daily loss limit:** 3% of account
+    - **Max bars in trade:** 20 H1 bars (~20 hours)
+    - **Trailing stop:** activates after profit ≥ initial risk, trails at 1.5× ATR
+    """)
+
+    st.divider()
+
+    st.subheader("🔗 Resources")
+    st.markdown("""
+    - 💻 [GitHub Repository](https://github.com/pkawai/data-science-capstone)
+    - 📄 [Project Proposal (DOCX)](https://github.com/pkawai/data-science-capstone/blob/main/Proposal%201.docx)
+    - 📓 [EDA Notebook (Checkpoint 2)](https://github.com/pkawai/data-science-capstone/blob/main/Checkpoint%202/eda_checkpoint2.ipynb)
+    """)
+
+    st.divider()
+
+    st.caption("Built by Orgil BK · American University of Mongolia · Spring 2026")
+
+
+def render_monitor_tab(state: dict, trades: pd.DataFrame, START_BALANCE: float):
     bot_status  = "🟢 Running" if state.get("bot_running") else "🔴 Offline"
     last_update = state.get("last_updated", "N/A")
     pairs_str   = "  |  ".join(state.get("pairs_trading", config.PAIRS))
@@ -341,7 +446,33 @@ def main():
                 st.plotly_chart(fig_hist, use_container_width=True)
 
     # ── Footer ────────────────────────────────────────────────────────────────
-    st.caption("EUR/USD H1 Bot | XGBoost + Triple Barrier | Demo account only — not financial advice.")
+    st.caption("Multi-Pair H1 Bot | XGBoost + Triple Barrier | Demo account only — not financial advice.")
+
+
+def main():
+    render_sidebar()
+
+    state         = load_state()
+    trades        = load_trades()
+    START_BALANCE = config.ACCOUNT_BALANCE
+
+    st.title("📈 Forex Auto-Trading Bot")
+    st.markdown("ML-powered trading signals on EUR/USD, GBP/USD, USD/JPY · Real-time monitoring + backtest results")
+
+    tab_monitor, tab_backtest, tab_about = st.tabs([
+        "📊 Live Monitor",
+        "📈 Backtest Results",
+        "ℹ️ About",
+    ])
+
+    with tab_monitor:
+        render_monitor_tab(state, trades, START_BALANCE)
+
+    with tab_backtest:
+        render_backtest_tab()
+
+    with tab_about:
+        render_about_tab()
 
 
 if __name__ == "__main__":
