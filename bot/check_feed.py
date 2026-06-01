@@ -34,12 +34,16 @@ def main():
             bars = len(raw)
             behind_h = (now - ts).total_seconds() / 3600
 
-            if behind_h <= 2:
+            # Newest CLOSED candle is always 1-2h old (we drop the forming one),
+            # and broker server-time offsets can add an hour, so <=3h = healthy.
+            if behind_h <= 3:
                 fresh = "FRESH"
-            elif now.weekday() >= 5:        # Sat/Sun — market closed
+            elif now.weekday() >= 5:        # Sat/Sun UTC — market closed
                 fresh = "weekend (market closed — normal)"
+            elif behind_h <= 8:
+                fresh = f"{behind_h:.1f}h behind — re-run in 1h; OK if the time advances"
             else:
-                fresh = f"STALE — {behind_h:.1f}h behind! check MT5 connection"
+                fresh = f"STALE — {behind_h:.1f}h behind! reconnect MT5"
 
             gate = "PASS (would consider trading)" if adx > config.ADX_THRESHOLD \
                 else "ranging (blocked)"
