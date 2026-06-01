@@ -1,13 +1,16 @@
 #!/usr/bin/env python
-# check_feed.py — Is the live MT5 data actually advancing, or frozen?
+# check_feed.py — Is the live MT5 data fresh, and would the bot trade?
 #
-# Prints, for each pair, the newest closed candle's timestamp + ADX (3 dp).
-# Run it now, then again in ~1 hour:
-#   - timestamp jumps by 1h  -> data is LIVE (ADX is just slow, not frozen)
-#   - timestamp does NOT move -> MT5 lost its broker connection (reconnect MT5)
+# Shows current UTC time + how many hours behind each pair's newest candle is,
+# so you don't have to do timezone math. A healthy live feed is <2h behind
+# during the trading week (the most recent candle is still forming, and we drop
+# it, so ~1h behind is normal). Weekends: the feed is closed, so it can be days
+# behind — that's expected, not a bug.
 #
 # Usage (Windows, MT5 open + logged in):
 #   python check_feed.py
+
+from datetime import datetime, timezone
 
 import config
 import mt5_executor as m
@@ -15,26 +18,41 @@ from features import build_features
 
 
 def main():
+    now = datetime.now(timezone.utc)
     m.connect()
-    print("=" * 60)
+    print("=" * 64)
     print(f"  LIVE FEED CHECK   (ADX gate is > {config.ADX_THRESHOLD})")
-    print("=" * 60)
+    print(f"  Current UTC time : {now:%Y-%m-%d %H:%M} UTC   "
+          f"(weekday {now.strftime('%a')})")
+    print("=" * 64)
     for s in config.PAIRS:
         try:
             raw = m.get_latest_candles(s, 12000)
             df = build_features(raw)
-            ts = raw.index[-1]
+            ts = raw.index[-1].to_pydatetime()
             adx = round(float(df.iloc[-1]["ADX"]), 3)
             bars = len(raw)
-            status = "PASS (would consider trading)" if adx > config.ADX_THRESHOLD \
+            behind_h = (now - ts).total_seconds() / 3600
+
+            if behind_h <= 2:
+                fresh = "FRESH"
+            elif now.weekday() >= 5:        # Sat/Sun — market closed
+                fresh = "weekend (market closed — normal)"
+            else:
+                fresh = f"STALE — {behind_h:.1f}h behind! check MT5 connection"
+
+            gate = "PASS (would consider trading)" if adx > config.ADX_THRESHOLD \
                 else "ranging (blocked)"
-            print(f"  {s}   last candle: {ts}   ADX: {adx:<8} {status}   [{bars} bars]")
+            print(f"  {s}  last candle {ts:%Y-%m-%d %H:%M}  "
+                  f"({behind_h:4.1f}h ago, {fresh})")
+            print(f"           ADX {adx:<8} {gate}   [{bars} bars]")
         except Exception as e:
             print(f"  {s}   ERROR: {e}")
-    print("=" * 60)
-    print("  Run again in ~1 hour. If 'last candle' time moves up by 1h,")
-    print("  the feed is LIVE. If it's stuck, reconnect MetaTrader 5.")
-    print("=" * 60)
+    print("=" * 64)
+    print("  FRESH + a pair says PASS  -> bot will trade when a signal lines up.")
+    print("  FRESH + all 'ranging'     -> market is just flat right now (normal).")
+    print("  STALE on a weekday        -> MT5 feed dropped; reconnect MetaTrader 5.")
+    print("=" * 64)
     m.disconnect()
 
 
