@@ -34,8 +34,27 @@ def connect() -> bool:
         if not authorized:
             mt5.shutdown()
             raise ConnectionError(f"MT5 login failed: {mt5.last_error()}")
+
+    # CRITICAL: verify the Python session is actually connected to the broker.
+    # initialize() can succeed while attaching to a terminal whose API link is
+    # NOT connected to the trade server — the GUI ticks fine (separate link)
+    # but copy_rates/ticks come back STALE. Catch that here loudly instead of
+    # silently trading on frozen data.
+    term = mt5.terminal_info()
     info = mt5.account_info()
-    logger.info(f"Connected to MT5: {info.name} | Balance: {info.balance} {info.currency}")
+    if term is None or not term.connected:
+        logger.warning("MT5 terminal reports DISCONNECTED from the trade server "
+                       "(terminal_info().connected = False). Data will be stale. "
+                       "In MT5: log into your account / fix the bottom-right link, "
+                       "or set MT5_LOGIN/PASSWORD/SERVER in config.py so the bot "
+                       "logs in itself.")
+    if info is None:
+        raise ConnectionError("MT5 connected but no account is logged in. "
+                              "Log into your account in the MT5 terminal, or set "
+                              "MT5_LOGIN/MT5_PASSWORD/MT5_SERVER in config.py.")
+    logger.info(f"Connected to MT5: {info.name} | login={info.login} | "
+                f"server={info.server} | Balance: {info.balance} {info.currency} | "
+                f"link={'UP' if (term and term.connected) else 'DOWN'}")
     return True
 
 
