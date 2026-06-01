@@ -52,6 +52,13 @@ def get_latest_candles(symbol: str, n: int = 200):
     import pandas as pd
     _require_mt5()
     mt5_symbol = config.PAIR_CONFIGS[symbol]["mt5_symbol"]
+    # Force the terminal to subscribe + sync fresh history for this symbol.
+    # Without this, copy_rates_from_pos can return STALE cached bars for any
+    # symbol without an open chart — even while Market Watch ticks live. This
+    # is the usual cause of "MT5 GUI is live but the bot sees a frozen candle".
+    if not mt5.symbol_select(mt5_symbol, True):
+        raise RuntimeError(f"Could not select {mt5_symbol} in Market Watch: "
+                           f"{mt5.last_error()}")
     rates = mt5.copy_rates_from_pos(mt5_symbol, config.MT5_TIMEFRAME, 0, n + 1)
     if rates is None or len(rates) == 0:
         raise RuntimeError(f"MT5 returned no candles for {symbol}: {mt5.last_error()}")
