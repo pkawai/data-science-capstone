@@ -39,6 +39,13 @@ def main():
         return
     print("  [ok]  mt5.initialize() succeeded")
 
+    # ── 0. Timeframe sanity (MT5 encodes hourly frames as 16384 + hours) ─────
+    tf = config.MT5_TIMEFRAME
+    tf_label = f"H{tf - 16384}" if 16385 <= tf <= 16400 else f"code {tf}"
+    tf_ok = (tf == 16385)
+    print(f"  [{'ok' if tf_ok else 'FAIL'}]  Timeframe: MT5_TIMEFRAME={tf} -> {tf_label}"
+          + ("" if tf_ok else "  <-- NOT H1! candles will look 'frozen' between closes"))
+
     # ── 1. Terminal link state (THE key check) ──────────────────────────────
     term = mt5.terminal_info()
     if term is None:

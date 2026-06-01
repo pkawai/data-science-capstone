@@ -47,7 +47,11 @@ def model_path(symbol: str) -> str:
 
 # ── Data ───────────────────────────────────────────────────────────────────────
 TIMEFRAME     = "1h"                # yfinance interval
-MT5_TIMEFRAME = 16388               # mt5.TIMEFRAME_H1 (avoid MT5 import on Mac)
+# MT5 encodes hourly frames as 16384 + hours. 16385 = H1, 16388 = H4.
+# This was MISLABELED as H1 but set to 16388 (H4) — so the live bot fetched
+# 4-hour candles while waking hourly (3 of 4 hours saw an unchanged "frozen"
+# bar) AND fed H4 data into an H1-trained model. 16385 is the real H1.
+MT5_TIMEFRAME = 16385               # mt5.TIMEFRAME_H1
 YEARS_HISTORY = 2                   # how far back to pull data
 
 # ── Trading sessions (UTC hours) ───────────────────────────────────────────────
