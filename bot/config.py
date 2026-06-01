@@ -76,7 +76,9 @@ TB_SL_MULT    = 1.0
 
 # ── Regime / trade filters ────────────────────────────────────────────────────
 ADX_PERIOD    = 14
-ADX_THRESHOLD = 25
+# 20 beats 25 on a 2-yr walk-forward across all 3 pairs (more trades, equal-or-
+# higher profit factor). See sweep_thresholds.py. 15 is too loose in choppy years.
+ADX_THRESHOLD = 20
 VOL_RATIO_MAX = 2.0
 
 # ── Model ─────────────────────────────────────────────────────────────────────

@@ -214,8 +214,13 @@ def _process_pair(symbol: str, model, current_balance: float,
         return
 
     # ── Fetch data + features ──────────────────────────────────────────────
+    # NOTE: must fetch a long window. Features include a Daily-200-EMA
+    # (D1_trend, D1_EMA200_dist) that needs ~hundreds of DAILY bars to compute.
+    # 200 H1 bars = only ~11 daily bars → that feature was garbage live (wrong
+    # sign/magnitude vs training) and quietly broke predictions. ~12k H1 bars
+    # (~2yr, the training window) restores train/serve parity. Verified.
     try:
-        raw_df = mt5ex.get_latest_candles(symbol, n=200)
+        raw_df = mt5ex.get_latest_candles(symbol, n=12000)
         df     = build_features(raw_df)
     except Exception as e:
         logger.error(f"[{symbol}] Data error: {e}")
