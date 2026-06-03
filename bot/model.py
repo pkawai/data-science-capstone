@@ -214,6 +214,24 @@ def predict_signal(bundle_or_model,
     signal     = int(np.argmax(proba[0]))
     confidence = float(proba[0][signal])
 
+    # ── Step 1b: directional override (for HOLD-heavy models) ───────────────
+    # A 3-class argmax + 0.65 confidence gate almost never fires: the model's
+    # *directional* confidence sits ~0.45-0.55, below the gate, so Buy/Sell get
+    # downgraded to Hold and the bot never trades (observed live: 4 days, 0
+    # trades; even a 67.5% Hold blocked a real lean). When enabled, ignore the
+    # Hold class and take the STRONGER of Buy/Sell if it clears DIRECTIONAL_FLOOR.
+    # Validated by analyze_hold_bias.py (2yr walk-forward): floor 0.50 → ~1-2
+    # trades/day/pair at profit factor 1.4-1.9. Bypasses the meta veto (the meta
+    # model was trained on argmax signals, not override signals).
+    if getattr(config, "DIRECTIONAL_OVERRIDE", False):
+        p_sell, p_buy = float(proba[0][0]), float(proba[0][2])
+        dir_signal = 2 if p_buy >= p_sell else 0
+        dir_conf   = max(p_buy, p_sell)
+        floor      = getattr(config, "DIRECTIONAL_FLOOR", 0.50)
+        if dir_conf < floor:
+            return 1, dir_conf
+        return dir_signal, dir_conf
+
     # ── Step 2: confidence threshold ────────────────────────────────────────
     thr = threshold or bundle.get("confidence_threshold", config.CONFIDENCE_THRESHOLD)
     if confidence < thr or signal == 1:

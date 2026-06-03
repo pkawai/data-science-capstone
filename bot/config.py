@@ -104,6 +104,15 @@ CONFIDENCE_THRESHOLD = 0.60
 # 0.65 chosen via sweep_confidence.py: PF ~2+ on all pairs, ~5-6 trades/wk/pair.
 CONFIDENCE_CAP = 0.65
 
+# ── Directional override ───────────────────────────────────────────────────────
+# The 3-class model rarely puts >65% on a single class, so argmax+confidence
+# collapses to HOLD and the bot never trades (observed: 4 days, 0 trades). With
+# this ON, predict_signal ignores the HOLD class and takes the stronger of
+# Buy/Sell when it clears DIRECTIONAL_FLOOR. Validated by analyze_hold_bias.py
+# (2yr walk-forward): floor 0.50 -> ~1-2 trades/day/pair, profit factor 1.4-1.9.
+DIRECTIONAL_OVERRIDE = True
+DIRECTIONAL_FLOOR    = 0.50
+
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
 TRAIN_MONTHS  = 15
 TEST_MONTHS   = 3
