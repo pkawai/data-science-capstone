@@ -98,6 +98,11 @@ XGBOOST_PARAMS = {
     "n_jobs":           -1,
 }
 CONFIDENCE_THRESHOLD = 0.60
+# Hard ceiling on each model's stored confidence threshold. Optuna can push the
+# per-bundle value to 0.75-0.80 — unreachable for the model (USDJPY max ~0.76),
+# so it never trades. model.load() clamps any stored threshold down to this.
+# 0.65 chosen via sweep_confidence.py: PF ~2+ on all pairs, ~5-6 trades/wk/pair.
+CONFIDENCE_CAP = 0.65
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
 TRAIN_MONTHS  = 15

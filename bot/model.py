@@ -149,6 +149,19 @@ def load(symbol: str) -> dict:
             "confidence_threshold": config.CONFIDENCE_THRESHOLD,
             "meta_threshold":       config.META_CONFIDENCE_THRESHOLD,
         }
+
+    # Cap the bundle's stored confidence threshold. Optuna sometimes "optimises"
+    # this to 0.75-0.80 — so high the model can rarely (USDJPY: NEVER) reach it,
+    # starving the bot of trades. A 2yr walk-forward sweep (sweep_confidence.py)
+    # shows 0.65 keeps profit factor ~2+ on all pairs while ~5x'ing trade count.
+    # Clamp here so no model can demand more than CONFIDENCE_CAP, without needing
+    # a retrain. (This OVERRIDES the per-bundle value used in predict_signal.)
+    stored = bundle.get("confidence_threshold", config.CONFIDENCE_THRESHOLD)
+    capped = min(stored, config.CONFIDENCE_CAP)
+    if capped < stored:
+        print(f"[model] Confidence threshold capped {stored:.2f} → {capped:.2f} "
+              f"(CONFIDENCE_CAP) for {symbol}.")
+    bundle["confidence_threshold"] = capped
     return bundle
 
 
