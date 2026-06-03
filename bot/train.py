@@ -129,8 +129,14 @@ def main(symbol: str):
     print("=" * 60)
 
     # ── 1. Fetch data ──────────────────────────────────────────────────────
+    # source="auto": MT5 on Windows, yfinance on Mac. CRITICAL — the live bot
+    # trades on MT5 (IC Markets) data, so training MUST use the same feed. Was
+    # hardcoded "yfinance", so the Windows models learned from Yahoo prices but
+    # traded on MT5 prices (train/serve feed mismatch) → live probabilities
+    # collapsed to HOLD and the bot never traded. Labels are only ~12% HOLD, so
+    # a correctly-trained model is directional; the mismatch was the real bug.
     print(f"\n[1/7] Fetching {config.YEARS_HISTORY}yr of {symbol} H1 data…")
-    raw_df = fetch_historical(symbol, source="yfinance")
+    raw_df = fetch_historical(symbol, source="auto")
 
     # ── 2. Feature engineering ─────────────────────────────────────────────
     print("\n[2/7] Building features (incl. D1 EMA200 + time features)…")

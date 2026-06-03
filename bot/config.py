@@ -104,13 +104,15 @@ CONFIDENCE_THRESHOLD = 0.60
 # 0.65 chosen via sweep_confidence.py: PF ~2+ on all pairs, ~5-6 trades/wk/pair.
 CONFIDENCE_CAP = 0.65
 
-# ── Directional override ───────────────────────────────────────────────────────
-# The 3-class model rarely puts >65% on a single class, so argmax+confidence
-# collapses to HOLD and the bot never trades (observed: 4 days, 0 trades). With
-# this ON, predict_signal ignores the HOLD class and takes the stronger of
-# Buy/Sell when it clears DIRECTIONAL_FLOOR. Validated by analyze_hold_bias.py
-# (2yr walk-forward): floor 0.50 -> ~1-2 trades/day/pair, profit factor 1.4-1.9.
-DIRECTIONAL_OVERRIDE = True
+# ── Directional override (DISABLED — was a band-aid) ───────────────────────────
+# This forces a Buy/Sell whenever max(Buy,Sell) clears DIRECTIONAL_FLOOR, bypassing
+# the confidence + meta filters. It was added because the live (Windows) models
+# collapse to HOLD — but that turned out to be a train/serve FEED bug (models
+# trained on Yahoo, traded on MT5; fixed in train.py), NOT an inherent HOLD bias.
+# The labels are only ~12% HOLD and a correctly-trained model picks a direction
+# ~80% of the time. After retraining on the MT5 feed, the normal pipeline works
+# without this. Left here, OFF, so it can be toggled back if ever needed.
+DIRECTIONAL_OVERRIDE = False
 DIRECTIONAL_FLOOR    = 0.50
 
 # ── Walk-forward backtest ─────────────────────────────────────────────────────
