@@ -90,6 +90,33 @@ def load_trades() -> pd.DataFrame:
         return _empty_trades()
 
 
+def _row_pip_size(symbol: str) -> float:
+    """Pip size for a symbol, defaulting to non-JPY (0.0001)."""
+    cfg = config.PAIR_CONFIGS.get(str(symbol), {})
+    return cfg.get("pip_size", 0.0001)
+
+
+def _potential_pnl(row) -> float:
+    """
+    USD value of a trade IF it reaches TP, using the correct per-pair pip size
+    and pip value. NOTE: this is a *potential* (target) figure — the live CSV
+    has no exit price, so realised P&L is unknown until a trade closes. Used
+    only for relative sizing of the chart, clearly labelled in the UI.
+    """
+    try:
+        sym      = row.get("symbol", "EURUSD")
+        cfg      = config.PAIR_CONFIGS.get(str(sym), config.PAIR_CONFIGS["EURUSD"])
+        pip      = cfg["pip_size"]
+        pip_val  = cfg["pip_value_usd"]
+        if row["direction"] == "BUY":
+            pips = (row["tp"] - row["entry"]) / pip
+        else:
+            pips = (row["entry"] - row["tp"]) / pip
+        return pips * pip_val * row["lots"]
+    except Exception:
+        return 0.0
+
+
 def compute_metrics(trades: pd.DataFrame, start_balance: float = 10_000) -> dict:
     if trades.empty:
         return {
@@ -97,33 +124,18 @@ def compute_metrics(trades: pd.DataFrame, start_balance: float = 10_000) -> dict
             "total_pnl": 0, "avg_confidence": 0,
         }
 
-    # Estimate pnl per trade from TP/SL direction
-    # (live trades don't have exit price yet — approximate from TP/SL distance)
-    def est_pnl(row):
-        try:
-            if row["direction"] == "BUY":
-                return (row["tp"] - row["entry"]) / 0.0001 * 10 * row["lots"]
-            else:
-                return (row["entry"] - row["tp"]) / 0.0001 * 10 * row["lots"]
-        except Exception:
-            return 0
-
+    # IMPORTANT: the live trades.csv records ENTRY/SL/TP at order time, not the
+    # exit. We therefore cannot compute realised win rate / profit factor from
+    # it. Report only what's truthful: trade count, avg confidence, and total
+    # *target* P&L (sum of TP-distance values) as an aspirational figure.
     trades = trades.copy()
-    trades["est_pnl"] = trades.apply(est_pnl, axis=1)
-
-    wins         = trades[trades["est_pnl"] > 0]
-    losses       = trades[trades["est_pnl"] < 0]
-    win_rate     = len(wins) / len(trades) if len(trades) > 0 else 0
-    gross_profit = wins["est_pnl"].sum()
-    gross_loss   = abs(losses["est_pnl"].sum()) if len(losses) > 0 else 1
-    pf           = gross_profit / gross_loss if gross_loss > 0 else 0
-    total_pnl    = trades["est_pnl"].sum()
+    trades["target_pnl"] = trades.apply(_potential_pnl, axis=1)
 
     return {
         "total_trades":   len(trades),
-        "win_rate":       win_rate,
-        "profit_factor":  pf,
-        "total_pnl":      total_pnl,
+        "win_rate":       None,   # unknown without exit prices
+        "profit_factor":  None,   # unknown without exit prices
+        "total_pnl":      trades["target_pnl"].sum(),
         "avg_confidence": trades["confidence"].mean() if "confidence" in trades.columns else 0,
     }
 
@@ -133,17 +145,7 @@ def build_equity_curve(trades: pd.DataFrame, start_balance: float = 10_000) -> p
         return pd.DataFrame({"time": [datetime.now(timezone.utc)], "balance": [start_balance]})
 
     df = trades.sort_values("time").copy()
-
-    def est_pnl(row):
-        try:
-            if row["direction"] == "BUY":
-                return (row["tp"] - row["entry"]) / 0.0001 * 10 * row["lots"]
-            else:
-                return (row["entry"] - row["tp"]) / 0.0001 * 10 * row["lots"]
-        except Exception:
-            return 0
-
-    df["pnl"]     = df.apply(est_pnl, axis=1)
+    df["pnl"]     = df.apply(_potential_pnl, axis=1)
     df["balance"] = start_balance + df["pnl"].cumsum()
     return df[["time", "balance"]]
 
@@ -168,14 +170,13 @@ def render_sidebar():
 
         st.markdown("## 🔄 Recent Updates")
         st.markdown("""
-**Latest changes (Mar 2026):**
-- 🎯 Relaxed live filters to allow more trades:
-  - Confidence: 0.65 → 0.60
-  - Meta threshold: 0.55 → 0.50
-  - News blackout: ±60 → ±30 min
-- 🔧 Fixed MT5 connection (works with already-logged-in terminal)
-- 💰 Adjusted starting balance to $5,000 (matches demo account)
-- 📊 Added demo data generator for Mac presentations
+**Latest changes (Jun 2026):**
+- 🐛 Fixed timeframe bug: bot was pulling H4, not H1 candles
+- 🔭 Live feature window 200 → 12,000 bars (Daily-EMA needs it)
+- 🎯 Confidence cap 0.65 — old models stored 0.75–0.80 the
+  model could never reach (USD/JPY was stuck at 0 trades)
+- 📉 ADX gate 25 → 20 (more trades, equal-or-better profit factor)
+- 🩺 Added diagnostics: mt5_doctor, check_feed, why_no_trade
 
 **Earlier upgrades:**
 - ✨ Ensemble model (XGBoost + LightGBM + RF)
@@ -201,10 +202,10 @@ def render_sidebar():
 
         st.markdown("## ⚠️ Known Limitations")
         st.markdown("""
-- Trend-following model — idle in ranging markets (last ~3 weeks)
+- Trend-following model — sits out genuinely ranging markets
 - MT5 is Windows-only (Mac uses demo data)
 - $5K demo limits position sizing
-- Trained on H1 only — won't generalize to other timeframes
+- Live win-rate/PF need recorded exits — see Backtest tab
         """)
 
 
@@ -381,18 +382,20 @@ def render_monitor_tab(state: dict, trades: pd.DataFrame, START_BALANCE: float):
         st.metric("📊 Open Trades", f"{n_open} / {len(config.PAIRS)}")
 
     with col4:
-        st.metric("🎯 Win Rate",
-                  f"{metrics['win_rate']:.1%}" if metrics['total_trades'] > 0 else "N/A",
-                  delta=f"{metrics['total_trades']} trades")
+        # Win rate/PF need exit prices the live CSV doesn't have — show trade
+        # count instead of a fabricated 100% win rate.
+        st.metric("📈 Trades Logged", f"{metrics['total_trades']}")
 
     with col5:
-        st.metric("⚡ Profit Factor",
-                  f"{metrics['profit_factor']:.2f}" if metrics['total_trades'] > 0 else "N/A")
+        st.metric("🎯 Avg Confidence",
+                  f"{metrics['avg_confidence']:.1%}" if metrics['total_trades'] > 0 else "N/A")
 
     st.divider()
 
     # ── Equity curve ──────────────────────────────────────────────────────────
-    st.subheader("Equity Curve")
+    st.subheader("Equity Curve (target projection)")
+    st.caption("Projected from each trade's take-profit target — live exits "
+               "aren't recorded yet, so this shows potential, not realised P&L.")
 
     eq_df = build_equity_curve(trades, START_BALANCE)
     fig   = go.Figure()
@@ -443,12 +446,13 @@ def render_monitor_tab(state: dict, trades: pd.DataFrame, START_BALANCE: float):
         m = metrics
         if m["total_trades"] > 0:
             col_a, col_b = st.columns(2)
-            col_a.metric("Total Trades",   m["total_trades"])
-            col_b.metric("Win Rate",        f"{m['win_rate']:.1%}")
-            col_a.metric("Profit Factor",   f"{m['profit_factor']:.2f}")
+            col_a.metric("Total Trades",    m["total_trades"])
             col_b.metric("Avg Confidence",  f"{m['avg_confidence']:.1%}")
+            col_a.metric("Open Cap (pairs)", len(config.PAIRS))
+            col_b.caption("Win rate / profit factor require trade exits — see "
+                          "the Backtest tab for validated performance.")
         else:
-            st.info("No completed trades yet.")
+            st.info("No trades logged yet.")
 
     st.divider()
 

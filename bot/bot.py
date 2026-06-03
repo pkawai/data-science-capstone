@@ -124,8 +124,13 @@ def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None
         initial_risk = abs(price_open - initial_sl)   # price units
 
         # ── Fetch current ATR for this symbol ────────────────────────────────
+        # Must fetch a long window: build_features() computes a Daily-200-EMA,
+        # MA-50, 20-bar vol ratio, lags etc., then dropna(). With only ~50 bars
+        # the frame collapses to empty -> df.iloc[-1] raises -> caught below ->
+        # breakeven & trailing stops would SILENTLY never run. Use the same
+        # 12,000-bar window as entry so ATR is valid and consistent.
         try:
-            raw_df = mt5ex.get_latest_candles(symbol, n=50)
+            raw_df = mt5ex.get_latest_candles(symbol, n=12000)
             df     = build_features(raw_df)
             atr    = df.iloc[-1]["ATR"]
         except Exception as e:
@@ -333,6 +338,9 @@ def run():
     logger.info(f"Models loaded: {list(models.keys())}")
 
     account_balance = config.ACCOUNT_BALANCE
+    current_balance = config.ACCOUNT_BALANCE   # seed: avoids NameError if the
+                                               # very first cycle crosses midnight
+                                               # UTC before current_balance is set
     daily_start_day = datetime.now(timezone.utc).date()
     trade_state     = {}   # per-ticket state for trailing stop / breakeven
 
