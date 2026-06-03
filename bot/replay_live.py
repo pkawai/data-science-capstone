@@ -22,20 +22,18 @@ import config
 import news_calendar
 from features import build_features, get_feature_columns
 from model import load, predict_proba
+from data_pipeline import fetch_historical
 
 LABEL = {0: "SELL", 1: "HOLD", 2: "BUY"}
 DAYS = int(sys.argv[1]) if len(sys.argv) > 1 else 30
 
 
 def _fetch(symbol):
-    import yfinance as yf
-    yf_sym = config.PAIR_CONFIGS[symbol]["yf_symbol"]
-    df = yf.Ticker(yf_sym).history(period="700d", interval="1h", auto_adjust=True)
-    if df.empty:
-        df = yf.Ticker(yf_sym.replace("=X", "")).history(period="700d", interval="1h", auto_adjust=True)
-    df.index = pd.to_datetime(df.index, utc=True)
-    df = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
-    return df[~df.index.duplicated(keep="last")].sort_index()
+    # source="auto": MT5 on Windows (the feed the bot trains AND trades on),
+    # yfinance on Mac. Verifying on the same feed is the whole point — measuring
+    # an MT5-trained model against yfinance data would reintroduce the very
+    # train/serve mismatch we just fixed.
+    return fetch_historical(symbol, source="auto")
 
 
 def replay(symbol):
@@ -84,7 +82,29 @@ def replay(symbol):
                 tally["meta_veto"] += 1; continue
         tally["WOULD_TRADE"] += 1
 
-    print(f"\n[{symbol}]  last {DAYS}d = {n} H1 bars   "
+    # ── Distribution on bars the bot can ACT on (in-session, ADX ok, vol ok) ──
+    # Decides the final config: if argmax is mostly HOLD but a DIRECTION still
+    # leans, the override (take stronger of Buy/Sell over a floor) is the right
+    # tool; the floor table shows where to set it. If argmax is mostly directional
+    # and clears ~0.55+, the normal path is enough and no override is needed.
+    hours   = np.asarray(recent.index.hour)
+    actable = (np.isin(hours, list(config.ACTIVE_HOURS))
+               & (recent["ADX"].to_numpy()       > config.ADX_THRESHOLD)
+               & (recent["Vol_ratio"].to_numpy() < config.VOL_RATIO_MAX))
+    p = proba[actable]
+    if p.shape[0]:
+        am   = p.argmax(1)
+        dc   = np.maximum(p[:, 2], p[:, 0])      # directional conviction max(Buy,Sell)
+        pct  = lambda m: 100 * m.mean()
+        print(f"\n[{symbol}]  actable bars (in-session, ADX>{config.ADX_THRESHOLD}, vol ok): {p.shape[0]}")
+        print(f"   argmax:  HOLD {pct(am==1):.0f}%   BUY {pct(am==2):.0f}%   SELL {pct(am==0):.0f}%")
+        print(f"   directional conviction max(Buy,Sell): median {np.median(dc)*100:.0f}%  "
+              f"(max {dc.max()*100:.0f}%)")
+        floors = [0.55, 0.50, 0.45, 0.40, 0.35, 0.30]
+        cells  = "   ".join(f"{f:.2f}:{pct(dc>=f):.0f}%" for f in floors)
+        print(f"   override would-trade by floor:  {cells}")
+
+    print(f"\n[{symbol}]  NORMAL PATH — last {DAYS}d = {n} H1 bars   "
           f"(conf_thr={conf_thr:.2f}, meta_thr={meta_thr:.2f})")
     active = n - tally["off_session"]
     print(f"   in-session bars: {active}")
