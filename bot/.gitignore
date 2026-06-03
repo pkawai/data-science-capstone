@@ -10,3 +10,4 @@ venv/
 
 # Logs / runtime artifacts (keep code, not noise)
 *.log
+local_overrides.json

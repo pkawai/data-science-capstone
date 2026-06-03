@@ -163,3 +163,21 @@ MT5_SERVER   = ""
 # ── Logging ───────────────────────────────────────────────────────────────────
 LOG_FILE  = "trades.log"
 LOG_LEVEL = "INFO"
+
+# ── Local overrides (auto-loaded; never committed) ─────────────────────────────
+# calibrate_floor.py writes calibrated values (e.g. DIRECTIONAL_FLOOR) to
+# local_overrides.json on the machine where the live models live. We load it
+# LAST so it wins over the defaults above, without editing this file (no git
+# conflicts). Safe if the file is absent.
+import os as _os, json as _json
+_ovr_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                          "local_overrides.json")
+try:
+    if _os.path.exists(_ovr_path):
+        with open(_ovr_path) as _f:
+            for _k, _v in _json.load(_f).items():
+                globals()[_k] = _v
+        print(f"[config] Applied local_overrides.json: "
+              f"{list(_json.load(open(_ovr_path)).keys())}")
+except Exception as _e:
+    print(f"[config] Could not read local_overrides.json: {_e}")
