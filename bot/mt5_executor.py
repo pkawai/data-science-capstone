@@ -244,6 +244,29 @@ def get_account_balance() -> float:
     return info.balance
 
 
+def get_account_equity() -> float:
+    """Equity = balance + floating P&L of open positions. Use this (not balance)
+    for the daily-loss guard so an unrealised drawdown can trip the limit."""
+    _require_mt5()
+    info = mt5.account_info()
+    if info is None:
+        raise RuntimeError("Cannot retrieve account info.")
+    return info.equity
+
+
+def get_server_now(symbol: str = None) -> int:
+    """Current broker SERVER time as a Unix timestamp — the SAME frame as
+    position.time and copy_rates 'time'. Avoids UTC/broker-offset skew when
+    measuring how long a position has been open."""
+    _require_mt5()
+    key = symbol or config.PAIRS[0]
+    mt5_symbol = config.PAIR_CONFIGS[key]["mt5_symbol"]
+    tick = mt5.symbol_info_tick(mt5_symbol)
+    if tick is None:
+        raise RuntimeError(f"Cannot get tick for server time ({mt5_symbol})")
+    return tick.time
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _require_mt5():

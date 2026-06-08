@@ -78,7 +78,10 @@ def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None
     2. Breakeven        — move SL to entry once unrealized profit >= initial risk.
     3. Trailing stop    — once in breakeven, trail SL by TRAIL_ATR_MULT × ATR.
     """
-    now_utc      = datetime.now(timezone.utc)
+    # Broker SERVER time (Unix secs) — the SAME clock as pos["time_open"]. Using
+    # this instead of UTC avoids a timezone skew that made the time-exit fire
+    # late (pos["time_open"] is broker server time, not UTC).
+    server_now   = mt5ex.get_server_now()
     open_tickets = {pos["ticket"] for pos in all_positions}
 
     # Clean up state for positions that were closed by SL/TP
@@ -102,8 +105,7 @@ def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None
         decimals = config.PAIR_CONFIGS[symbol]["decimals"]
 
         # ── Time-based exit ──────────────────────────────────────────────────
-        time_open    = datetime.fromtimestamp(pos["time_open"], tz=timezone.utc)
-        bars_elapsed = (now_utc - time_open).total_seconds() / 3600
+        bars_elapsed = (server_now - pos["time_open"]) / 3600
 
         if bars_elapsed >= config.MAX_BARS_IN_TRADE:
             logger.info(f"[{symbol}] Time exit: {bars_elapsed:.0f} bars open >= "
@@ -337,12 +339,13 @@ def run():
 
     logger.info(f"Models loaded: {list(models.keys())}")
 
-    account_balance = config.ACCOUNT_BALANCE
-    current_balance = config.ACCOUNT_BALANCE   # seed: avoids NameError if the
-                                               # very first cycle crosses midnight
-                                               # UTC before current_balance is set
-    daily_start_day = datetime.now(timezone.utc).date()
-    trade_state     = {}   # per-ticket state for trailing stop / breakeven
+    account_balance  = config.ACCOUNT_BALANCE   # start-of-day balance (display)
+    day_start_equity = config.ACCOUNT_BALANCE   # start-of-day equity (loss limit)
+    current_balance  = config.ACCOUNT_BALANCE   # seed: avoids NameError if the
+    current_equity   = config.ACCOUNT_BALANCE   # very first cycle crosses midnight
+                                                # UTC before these are first set
+    daily_start_day  = datetime.now(timezone.utc).date()
+    trade_state      = {}   # per-ticket state for trailing stop / breakeven
 
     try:
         while True:
@@ -353,17 +356,23 @@ def run():
             today    = now_utc.date()
 
             if today != daily_start_day:
-                daily_start_day = today
-                account_balance = current_balance
-                logger.info(f"New trading day. Start-of-day balance: {account_balance:.2f}")
+                daily_start_day  = today
+                account_balance  = current_balance
+                day_start_equity = current_equity
+                logger.info(f"New trading day. Start-of-day equity: {day_start_equity:.2f}")
 
             # ── Get current state ────────────────────────────────────────
             try:
                 current_balance = mt5ex.get_account_balance()
+                current_equity  = mt5ex.get_account_equity()
             except Exception:
                 current_balance = account_balance
+                current_equity  = day_start_equity
 
-            live_daily_pnl = current_balance - account_balance
+            # Daily P&L for the kill-switch is EQUITY-based so it includes OPEN
+            # (floating) losses — a balance-only P&L misses a big drawdown that
+            # hasn't been realised yet and the limit would never trip.
+            live_daily_pnl = current_equity - day_start_equity
             all_positions  = mt5ex.get_open_positions()
 
             # ── Manage open positions (time exit + trailing stop) ─────────
@@ -376,6 +385,7 @@ def run():
             _write_state({
                 "last_updated":   now_utc.isoformat(),
                 "balance":        current_balance,
+                "equity":         current_equity,
                 "daily_pnl":      live_daily_pnl,
                 "open_positions": all_positions,
                 "pairs_trading":  list(models.keys()),
@@ -383,8 +393,8 @@ def run():
                 "bot_running":    True,
             })
 
-            # ── Daily loss limit ─────────────────────────────────────────
-            if check_daily_limit(live_daily_pnl, account_balance):
+            # ── Daily loss limit (equity-based) ───────────────────────────
+            if check_daily_limit(live_daily_pnl, day_start_equity):
                 logger.warning(f"Daily loss limit hit ({live_daily_pnl:.0f} USD). Skipping.")
                 continue
 
@@ -396,8 +406,13 @@ def run():
             # ── Process each pair ────────────────────────────────────────
             for symbol, model in models.items():
                 try:
+                    # Re-read positions for EACH pair so a trade opened earlier
+                    # in THIS same cycle is counted. With the old shared snapshot,
+                    # risk-scaling and the USD-conflict filter ran stale and a
+                    # second correlated trade could open at full risk.
+                    live_positions = mt5ex.get_open_positions()
                     _process_pair(symbol, model, current_balance,
-                                  utc_hour, all_positions)
+                                  utc_hour, live_positions)
                 except Exception as e:
                     logger.error(f"[{symbol}] Unexpected error: {e}")
 
