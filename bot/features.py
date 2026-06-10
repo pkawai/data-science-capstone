@@ -38,9 +38,18 @@ def create_labels(df: pd.DataFrame, method: str = "triple_barrier") -> pd.Series
     return _atr_labels(df)
 
 
+# Absolute price LEVELS — kept in build_features (BB_pct, MA_cross etc. derive
+# from them, and already-trained bundles list them in feature_cols) but no
+# longer offered for NEW training: tree models split on raw levels, which act
+# as a date proxy — memorised in-sample, useless out-of-sample. The normalised
+# versions (BB_pct, BB_width, MA_cross, Price_MA_dist) carry the same signal.
+RAW_PRICE_LEVEL_COLS = {"BB_upper", "BB_lower", "MA_20", "MA_50"}
+
+
 def get_feature_columns(df: pd.DataFrame) -> list[str]:
-    """All feature column names — excludes raw OHLCV + Signal."""
-    exclude = {"Open", "High", "Low", "Close", "Volume", "Signal"}
+    """Feature columns for training — excludes raw OHLCV, Signal, and
+    non-stationary price-level columns (see RAW_PRICE_LEVEL_COLS)."""
+    exclude = {"Open", "High", "Low", "Close", "Volume", "Signal"} | RAW_PRICE_LEVEL_COLS
     return [c for c in df.columns if c not in exclude]
 
 

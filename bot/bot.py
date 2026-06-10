@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import config
 import news_calendar
-from features      import build_features, get_feature_columns
+from features      import build_features
 from model         import load, predict_signal
 from risk_manager  import calculate_position_size, calculate_sl_tp, check_daily_limit
 import mt5_executor as mt5ex
@@ -247,8 +247,12 @@ def _process_pair(symbol: str, model, current_balance: float,
         logger.warning(f"[{symbol}] Not enough feature rows. Skipping.")
         return
 
-    feat_cols = get_feature_columns(df)
-    X         = df[feat_cols]
+    # Pass the FULL feature frame: predict_signal selects each bundle's stored
+    # feature_cols, so models trained on an older feature list (e.g. one that
+    # still included the raw BB/MA price-level columns) keep finding their
+    # columns. Pre-filtering with get_feature_columns() here would starve old
+    # bundles whenever the default feature list evolves.
+    X         = df
     last_row  = df.iloc[-1]
     adx_value = last_row.get("ADX", 0)
     vol_ratio = last_row.get("Vol_ratio", 1)

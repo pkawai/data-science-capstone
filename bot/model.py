@@ -203,11 +203,20 @@ def predict_signal(bundle_or_model,
     bundle    = bundle_or_model
     feat_cols = bundle.get("feature_cols")
 
-    # Align feature columns to training order
+    # Align feature columns to training order. Fail LOUDLY if anything the
+    # model was trained on is missing — silently subsetting (the old
+    # behavior) feeds the ensemble a misaligned frame and the error surfaces
+    # later as an opaque library exception, or worse, garbage predictions.
     X_last = X.iloc[[-1]]
     if feat_cols is not None:
-        available = [f for f in feat_cols if f in X.columns]
-        X_last    = X_last[available]
+        missing = [f for f in feat_cols if f not in X.columns]
+        if missing:
+            raise ValueError(
+                f"Feature frame is missing {len(missing)} column(s) this "
+                f"model was trained on: {missing}. Train/serve feature "
+                f"mismatch — retrain the model or fix build_features()."
+            )
+        X_last = X_last[feat_cols]
 
     # ── Step 1: ensemble probabilities ──────────────────────────────────────
     proba      = predict_proba(bundle["primary_models"], X_last)  # (1, 3)
