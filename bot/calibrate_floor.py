@@ -122,6 +122,14 @@ def main():
     print("=" * 64)
     print("  CALIBRATE DIRECTIONAL_FLOOR to your local models")
     print("=" * 64)
+    print("  !! RETIRED: the directional override was a band-aid for the")
+    print("  !! train/serve feed bug (models trained on Yahoo, traded on MT5),")
+    print("  !! which is fixed in train.py. config.py now IGNORES the")
+    print("  !! DIRECTIONAL_* keys this script writes. If the bot isn't")
+    print("  !! trading, retrain on the MT5 feed instead:  python train.py <PAIR>")
+    print("  !! (Also note: this script measures on yfinance data, but the")
+    print("  !! models are now trained on the MT5 feed — its numbers are skewed.)")
+    print("=" * 64)
     chosen = []
     for s in config.PAIRS:
         try:

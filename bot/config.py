@@ -172,14 +172,30 @@ LOG_LEVEL = "INFO"
 # LAST so it wins over the defaults above, without editing this file (no git
 # conflicts). Safe if the file is absent.
 import os as _os, json as _json
+
+# Keys the loader must NEVER apply: the directional override was a band-aid
+# for the train/serve feed bug (fixed in train.py) and is retired. An old
+# calibrate_floor.py run left {"DIRECTIONAL_OVERRIDE": true, ...} in
+# local_overrides.json on the live machine — without this blocklist that stale
+# file silently re-enables the band-aid (bypassing the confidence gate AND the
+# meta-model) even though the default above is False.
+_RETIRED_OVERRIDE_KEYS = {"DIRECTIONAL_OVERRIDE", "DIRECTIONAL_FLOOR"}
+
 _ovr_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                           "local_overrides.json")
 try:
     if _os.path.exists(_ovr_path):
         with open(_ovr_path) as _f:
             _overrides = _json.load(_f)
-        for _k, _v in _overrides.items():
-            globals()[_k] = _v
-        print(f"[config] Applied local_overrides.json: {list(_overrides.keys())}")
+        _ignored = [_k for _k in _overrides if _k in _RETIRED_OVERRIDE_KEYS]
+        _applied = [_k for _k in _overrides if _k not in _RETIRED_OVERRIDE_KEYS]
+        for _k in _applied:
+            globals()[_k] = _overrides[_k]
+        if _applied:
+            print(f"[config] Applied local_overrides.json: {_applied}")
+        if _ignored:
+            print(f"[config] IGNORED retired keys in local_overrides.json: "
+                  f"{_ignored} — the directional override is disabled for good. "
+                  f"You can delete local_overrides.json.")
 except Exception as _e:
     print(f"[config] Could not read local_overrides.json: {_e}")

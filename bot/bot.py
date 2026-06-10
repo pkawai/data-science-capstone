@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 
 import config
 import news_calendar
-from features      import build_features, get_feature_columns
+from features      import build_features
 from model         import load, predict_signal
 from risk_manager  import calculate_position_size, calculate_sl_tp, check_daily_limit
 import mt5_executor as mt5ex
@@ -32,12 +32,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TRADES_CSV = "trades.csv"
-STATE_JSON = "state.json"
+TRADES_CSV        = "trades.csv"
+CLOSED_TRADES_CSV = "closed_trades.csv"
+STATE_JSON        = "state.json"
 
 TRADE_FIELDS = [
     "time", "symbol", "direction", "entry", "sl", "tp",
     "lots", "ticket", "confidence", "adx", "atr",
+]
+
+CLOSED_TRADE_FIELDS = [
+    "close_time", "symbol", "position_ticket", "deal_ticket",
+    "volume", "close_price", "profit", "swap", "commission", "reason",
 ]
 
 
@@ -57,6 +63,33 @@ def _write_trade(row: dict):
 def _write_state(state: dict):
     with open(STATE_JSON, "w") as f:
         json.dump(state, f, indent=2, default=str)
+
+
+def _append_closed_trades(deals: list[dict], path: str = CLOSED_TRADES_CSV) -> int:
+    """
+    Append exit deals that aren't logged yet; returns how many were written.
+    Deduplicated by deal_ticket (stable across restarts), so the overlapping
+    fetch window in get_closed_trades() can never double-log a trade.
+    This CSV is the realised-P&L record — trades.csv only has entries.
+    """
+    known = set()
+    if os.path.exists(path):
+        with open(path, newline="") as f:
+            known = {row["deal_ticket"] for row in csv.DictReader(f)}
+
+    new = [d for d in deals if str(d["deal_ticket"]) not in known]
+    if not new:
+        return 0
+
+    write_header = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CLOSED_TRADE_FIELDS,
+                                extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        for d in new:
+            writer.writerow(d)
+    return len(new)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -116,9 +149,19 @@ def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None
 
         # ── Initialise state for newly detected positions ────────────────────
         if ticket not in trade_state:
+            # Restart recovery: trade_state is memory-only, so after a restart
+            # an already-protected position is "newly detected" with its SL at
+            # or beyond entry. Re-running the breakeven block would move that
+            # SL BACKWARD to entry (loosening a winning stop) or fail with
+            # NO_CHANGES and leave trailing dead — resume in the trailing
+            # phase instead. (current_sl > 0: an SL of 0 means "no SL set".)
+            already_breakeven = current_sl > 0 and (
+                current_sl >= price_open if direction == 2   # Buy
+                else current_sl <= price_open                # Sell
+            )
             trade_state[ticket] = {
                 "initial_sl":       current_sl,
-                "breakeven_active": False,
+                "breakeven_active": already_breakeven,
             }
 
         ts           = trade_state[ticket]
@@ -237,8 +280,12 @@ def _process_pair(symbol: str, model, current_balance: float,
         logger.warning(f"[{symbol}] Not enough feature rows. Skipping.")
         return
 
-    feat_cols = get_feature_columns(df)
-    X         = df[feat_cols]
+    # Pass the FULL feature frame: predict_signal selects each bundle's stored
+    # feature_cols, so models trained on an older feature list (e.g. one that
+    # still included the raw BB/MA price-level columns) keep finding their
+    # columns. Pre-filtering with get_feature_columns() here would starve old
+    # bundles whenever the default feature list evolves.
+    X         = df
     last_row  = df.iloc[-1]
     adx_value = last_row.get("ADX", 0)
     vol_ratio = last_row.get("Vol_ratio", 1)
@@ -380,6 +427,15 @@ def run():
                 _manage_open_positions(all_positions, trade_state)
             except Exception as e:
                 logger.error(f"Position management error: {e}")
+
+            # ── Record realised results (exit deals → closed_trades.csv) ──
+            try:
+                n_closed = _append_closed_trades(mt5ex.get_closed_trades())
+                if n_closed:
+                    logger.info(f"Logged {n_closed} closed trade(s) → "
+                                f"{CLOSED_TRADES_CSV}")
+            except Exception as e:
+                logger.error(f"Closed-trade logging error: {e}")
 
             # ── Write state for dashboard ────────────────────────────────
             _write_state({

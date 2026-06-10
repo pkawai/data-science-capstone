@@ -201,14 +201,17 @@ def _check_exit(entry_data, test_df, current_idx, symbol):
     atr       = entry_data["atr"]
     breakeven = entry_data["breakeven"]
 
-    next_idx = current_idx + 1
-    if next_idx >= len(test_df):
-        return None
-
-    bar   = test_df.iloc[next_idx]
+    # Evaluate the CURRENT bar. Entry happens at the close of bar i0, and the
+    # in_trade branch runs before any new entry, so the first bar this sees is
+    # i0+1 — matching the label window (i+1..i+horizon) and live SL/TP orders,
+    # which are active immediately. (Previously this looked at current_idx+1,
+    # silently skipping bar i0+1 — the most likely bar to hit a 1-ATR stop.)
+    bar   = test_df.iloc[current_idx]
     high  = bar["High"]
     low   = bar["Low"]
     close = bar["Close"]
+    # NOTE: TP is checked before SL within a bar; when both are touched in the
+    # same H1 bar this is the optimistic assumption (kept deliberately, flagged).
 
     if direction == 2:
         if high >= tp: return (tp - entry) / pip_size, "TP", entry_data
@@ -227,7 +230,7 @@ def _check_exit(entry_data, test_df, current_idx, symbol):
             trail = close + config.SL_ATR_MULT * atr
             if trail < entry_data["sl"]: entry_data["sl"] = trail
 
-    if (next_idx - entry_data["start_idx"]) >= config.TB_HORIZON:
+    if (current_idx - entry_data["start_idx"]) >= config.TB_HORIZON:
         pnl = (close - entry) / pip_size if direction == 2 else (entry - close) / pip_size
         return pnl, "HORIZON", entry_data
 
