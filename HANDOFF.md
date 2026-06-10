@@ -16,13 +16,14 @@ School has ended — the bot is now used for real on a **demo account**, not gra
   **15:00–01:00 Ulaanbaatar**.
 - **The problem the whole time:** "bot never takes a trade." It was caused by a
   STACK of separate bugs, all now fixed (see history below).
-- **The last/open issue:** the model is HOLD-heavy and its *directional*
-  confidence is low, so it rarely trades. Fix = a directional override whose
-  threshold must be **calibrated to the user's own Windows models** via
-  `calibrate_floor.py`. As of this handoff the user needs to RUN that on Windows
-  and report the output. The current default `DIRECTIONAL_FLOOR = 0.50` is from
-  Mac models and is likely too high for the Windows models (their directional
-  confidence looked ~0.20–0.30 in the live log).
+- **The override saga is OVER:** the directional override / `calibrate_floor.py`
+  was a band-aid for the real bug (models trained on Yahoo, traded on MT5 —
+  fixed in train.py). The override is disabled in config.py AND config now
+  IGNORES the `DIRECTIONAL_*` keys a stale `local_overrides.json` may contain.
+  Do NOT recommend `calibrate_floor.py` — it is retired.
+- **Jun 10 2026 code review** found+fixed 4 more real bugs (branch
+  `fix/review-bugfixes`): see "Review fixes" in the history below. Models must
+  be RETRAINED on Windows to benefit from the label fix.
 
 ---
 
@@ -31,19 +32,19 @@ School has ended — the bot is now used for real on a **demo account**, not gra
 ```cmd
 cd "C:\Users\my tech\Projects\data-science-capstone\bot"
 git pull origin main
-python calibrate_floor.py      # loads THEIR models, writes local_overrides.json
+del local_overrides.json       # stale band-aid file, if present (now ignored anyway)
+python train.py EURUSD
+python train.py GBPUSD
+python train.py USDJPY
 python bot.py                  # Ctrl+C first if already running
 ```
-- `calibrate_floor.py` prints a per-pair table (directional confidence + trades/
-  day + win% per candidate floor) and writes the chosen floor to
-  `local_overrides.json` (gitignored, machine-specific). `config.py` auto-loads
-  that file at startup, so no config editing is needed.
-- At bot startup, the line `[config] Applied local_overrides.json: [...]`
-  confirms the calibrated floor is active.
-- **Ask the user to paste the `calibrate_floor.py` table.** If it says
-  "No positive-edge floor found on any pair", the Windows models are too weak →
-  the right move is a clean retrain (`python train.py EURUSD/GBPUSD/USDJPY`),
-  NOT more threshold fiddling.
+- Retraining matters: the old labels were structurally Sell-skewed
+  (EURUSD: 52% SELL / 34% BUY by construction; balanced ~33/34/33 after the
+  two-sided label fix), and raw price-level features are dropped.
+- The bot RUNS fine without retraining (old bundles stay compatible) — but it
+  would still carry the old labels' Sell bias.
+- Realised P&L now lands in `closed_trades.csv` (TP/SL/reason + profit) — use
+  it, not trades.csv, to judge performance after a few days.
 
 ---
 
@@ -80,11 +81,22 @@ normal in between. Judge over days, not hours.
    UTC; seeded upfront. (c) dashboard P&L assumed every trade hit TP + used
    EURUSD pip math for all pairs (USDJPY ~100x off, win rate always 100%); now
    honest (no fake win-rate/PF from the exit-less live CSV).
-7. **HOLD-collapse (current).** Model leans Buy/Sell ~85% of bars but at ~0.45–
-   0.55 directional confidence (LOWER on the Windows models), so argmax+0.65
-   gate collapses to HOLD → 4 live days, 0 trades. Fix: `DIRECTIONAL_OVERRIDE`
-   (take stronger of Buy/Sell over `DIRECTIONAL_FLOOR`, ignore HOLD, bypass meta
-   veto). Floor must be calibrated per-machine (`calibrate_floor.py`).
+7. **HOLD-collapse.** Root cause was the train/serve FEED mismatch (trained on
+   Yahoo, traded on MT5) — fixed in train.py (`source="auto"`). The directional
+   override that was tried first is retired; config ignores its keys.
+8. **Review fixes (Jun 10 2026, branch fix/review-bugfixes, w/ pytest suite):**
+   (a) stale `local_overrides.json` could silently re-enable the retired
+   override — config now blocklists `DIRECTIONAL_*` keys; (b) backtest off-by-
+   one: the FIRST bar after entry was never TP/SL-checked → every sweep metric
+   was biased; (c) restart wiped trade_state → breakeven re-fired and moved a
+   trailed SL BACKWARD (or died on NO_CHANGES, killing trailing) → positions
+   now resume in the trailing phase; (d) one-sided triple-barrier labels:
+   "Sell" meant a 1.0-ATR fall before a 1.5-ATR rise — NOT the short trade the
+   bot places (TP 1.5 below / SL 1.0 above) → labels now two-sided per trade
+   geometry (old: 52% SELL / 34% BUY on EURUSD; new: balanced ~33/33/33);
+   (e) raw price-level features (BB_upper/lower, MA_20/50) dropped from NEW
+   training (date-proxy memorisation; old bundles unaffected); (f) realised
+   P&L: bot logs its exit deals to `closed_trades.csv` every cycle.
 
 ---
 
