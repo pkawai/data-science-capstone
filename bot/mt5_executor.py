@@ -17,6 +17,13 @@ except ImportError:
     MT5_AVAILABLE = False
     logger.warning("MetaTrader5 package not installed — mt5_executor is disabled.")
 
+# Identifies this bot's orders/deals in MT5 (request "magic" field). Used to
+# tell our trades apart from manual ones when reading deal history.
+MAGIC = 20260304
+
+# mt5.DEAL_REASON_* codes → readable close reason for closed_trades.csv
+DEAL_REASON_LABELS = {3: "BOT", 4: "SL", 5: "TP", 6: "STOPOUT"}
+
 
 # ── Connection ─────────────────────────────────────────────────────────────────
 
@@ -124,7 +131,7 @@ def place_order(symbol: str,
         "sl":           sl,
         "tp":           tp,
         "deviation":    10,
-        "magic":        20260304,
+        "magic":        MAGIC,
         "comment":      comment,
         "type_time":    mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
@@ -199,7 +206,7 @@ def close_position(ticket: int) -> bool:
         "position":     ticket,
         "price":        close_price,
         "deviation":    10,
-        "magic":        20260304,
+        "magic":        MAGIC,
         "comment":      "bot_close",
         "type_time":    mt5.ORDER_TIME_GTC,
         "type_filling": mt5.ORDER_FILLING_IOC,
@@ -252,6 +259,42 @@ def get_account_equity() -> float:
     if info is None:
         raise RuntimeError("Cannot retrieve account info.")
     return info.equity
+
+
+def get_closed_trades(days: int = 7) -> list[dict]:
+    """
+    This bot's EXIT deals (closed positions) from the last `days` of MT5
+    history. trades.csv records only entries, so this is the sole source of
+    realised P&L (profit/swap/commission) and the actual close reason.
+    Filtered to our MAGIC number (ignores manual trades) and to deals that
+    CLOSE a position (DEAL_ENTRY_OUT — entry deals carry no realised P&L).
+    """
+    from datetime import datetime, timedelta, timezone
+    _require_mt5()
+    # history_deals_get expects broker SERVER time; pad one day each side so
+    # the UTC/server offset can never clip the window.
+    now = datetime.now(timezone.utc) + timedelta(days=1)
+    deals = mt5.history_deals_get(now - timedelta(days=days + 2), now)
+    if deals is None:
+        return []
+    out = []
+    for d in deals:
+        if d.magic != MAGIC or d.entry != mt5.DEAL_ENTRY_OUT:
+            continue
+        out.append({
+            "deal_ticket":     d.ticket,
+            "position_ticket": d.position_id,
+            # d.time is broker server time — same convention as the candles
+            "close_time":      datetime.fromtimestamp(d.time, tz=timezone.utc).isoformat(),
+            "symbol":          d.symbol,
+            "volume":          d.volume,
+            "close_price":     d.price,
+            "profit":          d.profit,
+            "swap":            d.swap,
+            "commission":      d.commission,
+            "reason":          DEAL_REASON_LABELS.get(d.reason, str(d.reason)),
+        })
+    return out
 
 
 def get_server_now(symbol: str = None) -> int:

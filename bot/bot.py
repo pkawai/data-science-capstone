@@ -32,12 +32,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TRADES_CSV = "trades.csv"
-STATE_JSON = "state.json"
+TRADES_CSV        = "trades.csv"
+CLOSED_TRADES_CSV = "closed_trades.csv"
+STATE_JSON        = "state.json"
 
 TRADE_FIELDS = [
     "time", "symbol", "direction", "entry", "sl", "tp",
     "lots", "ticket", "confidence", "adx", "atr",
+]
+
+CLOSED_TRADE_FIELDS = [
+    "close_time", "symbol", "position_ticket", "deal_ticket",
+    "volume", "close_price", "profit", "swap", "commission", "reason",
 ]
 
 
@@ -57,6 +63,33 @@ def _write_trade(row: dict):
 def _write_state(state: dict):
     with open(STATE_JSON, "w") as f:
         json.dump(state, f, indent=2, default=str)
+
+
+def _append_closed_trades(deals: list[dict], path: str = CLOSED_TRADES_CSV) -> int:
+    """
+    Append exit deals that aren't logged yet; returns how many were written.
+    Deduplicated by deal_ticket (stable across restarts), so the overlapping
+    fetch window in get_closed_trades() can never double-log a trade.
+    This CSV is the realised-P&L record — trades.csv only has entries.
+    """
+    known = set()
+    if os.path.exists(path):
+        with open(path, newline="") as f:
+            known = {row["deal_ticket"] for row in csv.DictReader(f)}
+
+    new = [d for d in deals if str(d["deal_ticket"]) not in known]
+    if not new:
+        return 0
+
+    write_header = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CLOSED_TRADE_FIELDS,
+                                extrasaction="ignore")
+        if write_header:
+            writer.writeheader()
+        for d in new:
+            writer.writerow(d)
+    return len(new)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -394,6 +427,15 @@ def run():
                 _manage_open_positions(all_positions, trade_state)
             except Exception as e:
                 logger.error(f"Position management error: {e}")
+
+            # ── Record realised results (exit deals → closed_trades.csv) ──
+            try:
+                n_closed = _append_closed_trades(mt5ex.get_closed_trades())
+                if n_closed:
+                    logger.info(f"Logged {n_closed} closed trade(s) → "
+                                f"{CLOSED_TRADES_CSV}")
+            except Exception as e:
+                logger.error(f"Closed-trade logging error: {e}")
 
             # ── Write state for dashboard ────────────────────────────────
             _write_state({
