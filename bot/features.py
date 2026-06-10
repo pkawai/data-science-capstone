@@ -181,8 +181,13 @@ def _add_h4_trend(df: pd.DataFrame) -> pd.DataFrame:
     h4_trend = (h4_close > h4_ema).astype(float)
     h4_rsi_delta = h4_close.diff(3) / h4_close.shift(3)   # 3-bar H4 momentum
 
-    df["H4_trend"]     = h4_trend.reindex(df.index, method="ffill")
-    df["H4_momentum"]  = h4_rsi_delta.reindex(df.index, method="ffill")
+    # .shift(1): resample("4h").last() labels each bin at its START (e.g. 00:00)
+    # but fills it with that bin's CLOSING value (the 03:00 close). Without the
+    # shift, an H1 bar at 01:00 would ffill the 00:00 label and read the 03:00
+    # close — future data (look-ahead). Shifting one 4h period back means each
+    # bar only sees the most recent COMPLETED 4h bar.
+    df["H4_trend"]     = h4_trend.shift(1).reindex(df.index, method="ffill")
+    df["H4_momentum"]  = h4_rsi_delta.shift(1).reindex(df.index, method="ffill")
     return df
 
 
@@ -241,8 +246,13 @@ def _add_d1_trend(df: pd.DataFrame) -> pd.DataFrame:
     d1_trend  = (d1_close > d1_ema200).astype(float)
     d1_dist   = d1_close - d1_ema200
 
-    df["D1_trend"]       = d1_trend.reindex(df.index, method="ffill")
-    d1_dist_h1           = d1_dist.reindex(df.index, method="ffill")
+    # .shift(1): resample("1D").last() labels each day at 00:00 but fills it with
+    # that day's CLOSING value (the 23:00 close). Without the shift, an intraday
+    # bar at 05:00 would ffill the 00:00 label and read the 23:00 close — up to
+    # ~23h of FUTURE data (look-ahead). Shifting one day back means each bar sees
+    # only the previous COMPLETED daily close (correct as of that hour).
+    df["D1_trend"]       = d1_trend.shift(1).reindex(df.index, method="ffill")
+    d1_dist_h1           = d1_dist.shift(1).reindex(df.index, method="ffill")
     df["D1_EMA200_dist"] = d1_dist_h1 / df["ATR"].replace(0, np.nan)
     return df
 

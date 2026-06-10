@@ -177,9 +177,9 @@ _ovr_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
 try:
     if _os.path.exists(_ovr_path):
         with open(_ovr_path) as _f:
-            for _k, _v in _json.load(_f).items():
-                globals()[_k] = _v
-        print(f"[config] Applied local_overrides.json: "
-              f"{list(_json.load(open(_ovr_path)).keys())}")
+            _overrides = _json.load(_f)
+        for _k, _v in _overrides.items():
+            globals()[_k] = _v
+        print(f"[config] Applied local_overrides.json: {list(_overrides.keys())}")
 except Exception as _e:
     print(f"[config] Could not read local_overrides.json: {_e}")
