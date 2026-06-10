@@ -48,32 +48,62 @@ def get_feature_columns(df: pd.DataFrame) -> list[str]:
 
 def _triple_barrier_labels(df: pd.DataFrame) -> pd.Series:
     """
-    For each candle, look forward up to TB_HORIZON candles.
-    If price hits TB_TP_MULT*ATR above entry first → Buy (2)
-    If price hits TB_SL_MULT*ATR below entry first → Sell (0)
-    If neither hits within horizon               → Hold (1)
+    Two-sided triple barrier — label each bar by which TRADE would have won,
+    using the same geometry the bot executes (TB_TP_MULT / TB_SL_MULT × ATR):
+
+      Buy  (2): long wins  — +TP_MULT×ATR hit before −SL_MULT×ATR
+      Sell (0): short wins — −TP_MULT×ATR hit before +SL_MULT×ATR
+      Hold (1): neither side wins within TB_HORIZON (or the hit is ambiguous)
+
+    The old one-sided version used a single barrier pair (+1.5/−1.0) for both
+    directions, so "Sell" meant "fell 1.0×ATR before rising 1.5×ATR" — NOT the
+    short trade the bot places (TP 1.5×ATR below, SL 1.0×ATR above). It also
+    made Sell labels structurally easier to trigger (closer barrier). A bar
+    touching both of a side's barriers is a loss for that side (intra-bar
+    order is unknowable from OHLC — conservative).
     """
-    labels = np.ones(len(df), dtype=float)   # default Hold
-    closes = df["Close"].values
-    atrs   = df["ATR"].values
-    highs  = df["High"].values
-    lows   = df["Low"].values
+    labels  = np.ones(len(df), dtype=float)   # default Hold
+    closes  = df["Close"].values
+    atrs    = df["ATR"].values
+    highs   = df["High"].values
+    lows    = df["Low"].values
     horizon = config.TB_HORIZON
+    tp_m    = config.TB_TP_MULT
+    sl_m    = config.TB_SL_MULT
     n = len(df)
 
     for i in range(n - horizon):
         entry = closes[i]
         atr   = atrs[i]
-        tp    = entry + config.TB_TP_MULT * atr
-        sl    = entry - config.TB_SL_MULT * atr
+        if not np.isfinite(atr) or atr <= 0:
+            continue
+        long_tp,  long_sl  = entry + tp_m * atr, entry - sl_m * atr
+        short_tp, short_sl = entry - tp_m * atr, entry + sl_m * atr
 
-        for j in range(1, horizon + 1):
-            if highs[i + j] >= tp:
-                labels[i] = 2   # Buy
+        long_win  = short_win  = False
+        long_done = short_done = False
+        for j in range(i + 1, i + 1 + horizon):
+            if not long_done:
+                hit_tp = highs[j] >= long_tp
+                hit_sl = lows[j]  <= long_sl
+                if hit_tp and not hit_sl:
+                    long_win, long_done = True, True
+                elif hit_sl:                      # SL first (or ambiguous bar)
+                    long_done = True
+            if not short_done:
+                hit_tp = lows[j]  <= short_tp
+                hit_sl = highs[j] >= short_sl
+                if hit_tp and not hit_sl:
+                    short_win, short_done = True, True
+                elif hit_sl:
+                    short_done = True
+            if long_done and short_done:
                 break
-            if lows[i + j] <= sl:
-                labels[i] = 0   # Sell
-                break
+
+        if long_win and not short_win:
+            labels[i] = 2   # Buy
+        elif short_win and not long_win:
+            labels[i] = 0   # Sell
 
     # Last `horizon` rows have no valid label
     labels[n - horizon:] = np.nan
