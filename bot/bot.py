@@ -116,9 +116,19 @@ def _manage_open_positions(all_positions: list[dict], trade_state: dict) -> None
 
         # ── Initialise state for newly detected positions ────────────────────
         if ticket not in trade_state:
+            # Restart recovery: trade_state is memory-only, so after a restart
+            # an already-protected position is "newly detected" with its SL at
+            # or beyond entry. Re-running the breakeven block would move that
+            # SL BACKWARD to entry (loosening a winning stop) or fail with
+            # NO_CHANGES and leave trailing dead — resume in the trailing
+            # phase instead. (current_sl > 0: an SL of 0 means "no SL set".)
+            already_breakeven = current_sl > 0 and (
+                current_sl >= price_open if direction == 2   # Buy
+                else current_sl <= price_open                # Sell
+            )
             trade_state[ticket] = {
                 "initial_sl":       current_sl,
-                "breakeven_active": False,
+                "breakeven_active": already_breakeven,
             }
 
         ts           = trade_state[ticket]
